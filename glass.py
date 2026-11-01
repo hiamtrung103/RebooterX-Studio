@@ -1,11 +1,12 @@
 """Raster glass controls with crisp canvas text, icons and damped tap feedback."""
 import math
 import time
+from functools import lru_cache
 import tkinter as tk
 from tkinter import font as tkfont
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
 from painting import AnimationTimer
 from theme import BLUE, INK, RAIL, font, icon
@@ -177,6 +178,36 @@ class RailItem:
         self.rail.draw()
 
 
+@lru_cache(maxsize=16)
+def rail_lens(width, height, dark):
+    """Soft capsule lighting, without a stroked outline or decorative arc."""
+    scale = 2
+    size = (width*scale, height*scale)
+    base = '#243747' if dark else '#DFEDFC'
+    surface = Image.new('RGBA', size)
+    pixels = surface.load()
+    for y in range(size[1]):
+        ny = (y+.5)/size[1]*2-1
+        for x in range(size[0]):
+            nx = (x+.5)/size[0]*2-1
+            crown = -.67+.18*nx*nx
+            light = math.exp(-((ny-crown)/.24)**2)*math.exp(-(nx/.96)**4)
+            shade = math.exp(-((ny-.75)/.28)**2)
+            color = blend(base, '#FFFFFF', light*(.075 if dark else .14))
+            color = blend(color, '#0D1725', shade*.035)
+            pixels[x, y] = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))+(255,)
+    mask = Image.new('L', size)
+    ImageDraw.Draw(mask).rounded_rectangle((1, 1, size[0]-2, size[1]-2), radius=height, fill=255)
+    surface.putalpha(mask)
+    surface = surface.resize((width, height), Image.Resampling.LANCZOS)
+    padding = max(8, round(height*.30))
+    shadow_mask = Image.new('L', (width+padding*2, height+padding*2))
+    shadow_mask.paste(surface.getchannel('A'), (padding, padding+2))
+    shadow = Image.new('RGBA', shadow_mask.size, (5, 18, 36, 0))
+    shadow.putalpha(shadow_mask.filter(ImageFilter.GaussianBlur(height*.11)).point(lambda a: round(a*(.16 if dark else .09))))
+    return surface, shadow, padding
+
+
 class GlassRail(ctk.CTkFrame):
     """One composited surface lets a spring-driven lens move between destinations."""
     def __init__(self, parent, app, keys, glyphs):
@@ -185,25 +216,34 @@ class GlassRail(ctk.CTkFrame):
         self.app, self.keys, self.glyphs = app, keys, glyphs
         self.fonts = (font(app, 16), font(app, 16, True))
         self.position = self.target = self.velocity = 0.
+        self.selected = 0
+        self.pointer_origin = None
+        self.held = self.dragging = False
+        self.hold_amount = self.grab_anchor = 0.
         self.hovered = None
         self.job = None
         self.timer = AnimationTimer()
         self.items = {key: RailItem(self, i) for i, key in enumerate(keys)}
         self.photos = []
-        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, takefocus=1)
+        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, takefocus=1, cursor='hand2')
         self.canvas.pack(fill='both', expand=True)
         self.canvas.bind('<Configure>', lambda _: self.draw())
         self.canvas.bind('<Motion>', self.motion)
         self.canvas.bind('<Leave>', self.leave)
-        self.canvas.bind('<Button-1>', self.click)
+        self.canvas.bind('<ButtonPress-1>', self.pointer_press)
+        self.canvas.bind('<B1-Motion>', self.pointer_slide)
+        self.canvas.bind('<ButtonRelease-1>', self.pointer_release)
+        self.canvas.bind('<Escape>', self.cancel_pointer)
+        self.canvas.bind('<FocusOut>', self.cancel_pointer)
         self.canvas.bind('<Up>', lambda _: self.move(-1))
         self.canvas.bind('<Down>', lambda _: self.move(1))
-        self.canvas.bind('<Return>', lambda _: self.app.navigate(self.keys[round(self.target)]))
-        self.canvas.bind('<space>', lambda _: self.app.navigate(self.keys[round(self.target)]))
+        self.canvas.bind('<Return>', lambda _: self.app.navigate(self.keys[self.selected]))
+        self.canvas.bind('<space>', lambda _: self.app.navigate(self.keys[self.selected]))
         self.ready = True
 
     def move(self, delta):
-        self.app.navigate(self.keys[max(0, min(len(self.keys)-1, round(self.target)+delta))])
+        self.cancel_pointer()
+        self.app.navigate(self.keys[max(0, min(len(self.keys)-1, self.selected+delta))])
 
     def motion(self, event):
         index = int(event.y / max(1, self._apply_widget_scaling(54)))
@@ -215,33 +255,97 @@ class GlassRail(ctk.CTkFrame):
         self.hovered = None
         self.draw()
 
-    def click(self, event):
+    def pointer_press(self, event):
         self.canvas.focus_set()
-        index = int(event.y / max(1, self._apply_widget_scaling(54)))
-        if 0 <= index < len(self.keys):
-            self.app.navigate(self.keys[index])
+        self.pointer_origin = (event.x, event.y)
+        x, y, width, height = getattr(self, 'lens_bounds', (0, 0, 0, 0))
+        self.held = x <= event.x <= x+width and y <= event.y <= y+height
+        self.dragging = False
+        if self.held:
+            self.grab_anchor = event.y / self._apply_widget_scaling(54) - self.position
+            self.target, self.velocity = self.position, 0.
+            self.canvas.grab_set()
+            self.wake()
+        return 'break'
+
+    def pointer_slide(self, event):
+        if not self.held or self.pointer_origin is None:
+            return
+        if not self.dragging and abs(event.y-self.pointer_origin[1]) < self._apply_widget_scaling(3):
+            return
+        self.dragging = True
+        self.target = max(0., min(len(self.keys)-1., event.y/self._apply_widget_scaling(54)-self.grab_anchor))
+        self.wake()
+        return 'break'
+
+    def release_pointer(self):
+        self.pointer_origin = None
+        self.held = self.dragging = False
+        if self.canvas.grab_current() is self.canvas:
+            self.canvas.grab_release()
+
+    def pointer_release(self, event):
+        if self.pointer_origin is None:
+            return
+        index = math.floor(self.target+.5) if self.dragging else int(event.y/self._apply_widget_scaling(54))
+        inside = 0 <= event.x <= self.canvas.winfo_width() and 0 <= event.y < self.canvas.winfo_height()
+        choose = self.dragging or inside
+        self.release_pointer()
+        try:
+            if choose and 0 <= index < len(self.keys):
+                self.app.navigate(self.keys[index])
+        finally:
+            self.target = float(self.selected)
+            self.wake()
+        return 'break'
+
+    def cancel_pointer(self, _event=None):
+        if self.pointer_origin is None:
+            return
+        self.release_pointer()
+        self.target = float(self.selected)
+        self.wake()
+        return 'break'
 
     def select(self, index):
+        self.selected = index
+        if self.held:
+            return
         if self.target == index:
             return
         self.target = float(index)
+        self.wake()
+
+    def wake(self):
+        if self.job is not None:
+            return
         self.last_tick = time.perf_counter()
-        if self.job is None:
-            self.job = self.timer.schedule(self, 1, self.animate)
+        self.job = self.timer.schedule(self, 1, self.animate)
 
     def animate(self):
         self.job = None
         now = time.perf_counter()
-        dt = min(.032, now-self.last_tick)
+        dt = min(.12, max(.001, now-self.last_tick))
         self.last_tick = now
-        self.velocity += ((self.target-self.position)*190 - self.velocity*23)*dt
-        self.position += self.velocity*dt
-        if abs(self.position-self.target) < .001 and abs(self.velocity) < .01:
+        omega = 22. if self.held else 18.
+        offset = self.position-self.target
+        coefficient = self.velocity+omega*offset
+        decay = math.exp(-omega*dt)
+        self.position = self.target+(offset+coefficient*dt)*decay
+        self.velocity = (self.velocity-omega*coefficient*dt)*decay
+        hold_target = float(self.held)
+        self.hold_amount += (hold_target-self.hold_amount)*(1-math.exp(-24*dt))
+        moving = abs(self.position-self.target) >= .001 or abs(self.velocity) >= .01
+        swelling = abs(self.hold_amount-hold_target) > .002
+        if not moving:
             self.position = self.target
             self.velocity = 0.
-            self.timer.stop()
-        else:
+        if not swelling:
+            self.hold_amount = hold_target
+        if moving or swelling:
             self.job = self.timer.schedule(self, 16, self.animate)
+        else:
+            self.timer.stop()
         self.draw()
 
     def _set_appearance_mode(self, mode_string):
@@ -263,32 +367,25 @@ class GlassRail(ctk.CTkFrame):
         background = self._apply_appearance_mode(RAIL)
         canvas.configure(bg=background)
         canvas.delete('all')
-        lens_width = max(12, width-4*scale)
-        stretch = min(10, abs(self.velocity)*1.1)*scale
-        lens_height = 46*scale + stretch
-        base = '#25445A' if dark else '#DDEEFF'
-        size = (round(lens_width*2), round(lens_height*2))
-        surface = Image.new('RGBA', size)
-        gradient = Image.new('RGBA', size)
-        d = ImageDraw.Draw(gradient)
-        for y in range(size[1]):
-            t = y/max(1, size[1]-1)
-            d.line((0, y, size[0], y), fill=blend(base, '#FFFFFF', (.16 if dark else .48)*(1-t)**3))
-        mask = Image.new('L', size)
-        box = (1, 1, size[0]-2, size[1]-2)
-        ImageDraw.Draw(mask).rounded_rectangle(box, radius=16*scale, fill=255)
-        gradient.putalpha(mask)
-        surface = Image.alpha_composite(surface, gradient)
-        edge = ImageDraw.Draw(surface)
-        edge.rounded_rectangle(box, radius=16*scale, outline=blend(base, '#FFFFFF' if dark else '#7EADD3', .30), width=2)
-        edge.arc((3, 3, size[0]-4, size[1]-4), 190, 300, fill=blend(base, '#FFFFFF', .65), width=2)
-        self.photos = [ImageTk.PhotoImage(surface.resize((round(lens_width), round(lens_height)), Image.Resampling.LANCZOS), master=self)]
-        canvas.create_image(width/2, self.position*step+step/2, image=self.photos[0])
+        lens_width = max(12, round(width-22*scale))
+        lens_height = max(12, round(42*scale))
+        surface, shadow, padding = rail_lens(lens_width, lens_height, dark)
+        travel = 1-math.exp(-abs(self.velocity)/12)
+        sw = round(lens_width*(1+.025*self.hold_amount+.015*travel))
+        sh = round(lens_height*(1+.12*self.hold_amount+.13*travel))
+        stretched = surface.resize((sw, sh), Image.Resampling.BICUBIC)
+        local = Image.new('RGBA', (sw+padding*2, sh+padding*2))
+        local.alpha_composite(shadow.resize(local.size, Image.Resampling.BICUBIC))
+        local.alpha_composite(stretched, (padding, padding))
+        center_y = self.position*step+step/2
+        self.lens_bounds = ((width-sw)/2, center_y-sh/2, sw, sh)
+        self.photos = [ImageTk.PhotoImage(local, master=self)]
+        canvas.create_image(width/2, center_y, image=self.photos[0])
         for i, key in enumerate(self.keys):
-            active = i == round(self.target)
+            active = i == max(0, min(len(self.keys)-1, math.floor(self.position+.5)))
             color = BLUE if active else self._apply_appearance_mode(INK)
             if self.hovered == i and not active:
-                canvas.create_line(16*scale, i*step+step-5*scale, width-16*scale, i*step+step-5*scale, fill=blend(background, BLUE, .23))
+                color = blend(color, BLUE, .32)
             glyph = icon(self.glyphs[key], 21, accent=active)
             photo = glyph.create_scaled_photo_image(scale, self._get_appearance_mode())
             self.photos.append(photo)
@@ -298,6 +395,7 @@ class GlassRail(ctk.CTkFrame):
                 anchor='w', fill=color, font=self._apply_font_scaling(self.fonts[active]))
 
     def destroy(self):
+        self.release_pointer()
         if self.job is not None:
             self.after_cancel(self.job)
         self.timer.stop()

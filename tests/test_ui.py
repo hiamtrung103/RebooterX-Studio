@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import core
@@ -205,6 +206,66 @@ class StudioUiTests(unittest.TestCase):
                                          row.winfo_rooty() + row.winfo_height())
         self.app.withdraw()
         self.assertEqual(errors, [])
+
+    def test_held_lens_drags_continuously_and_navigates_only_on_release(self):
+        self.app.attributes('-alpha', 0)
+        self.app.deiconify()
+        self.app.update()
+        rail = self.app.nav_rail
+        rail.draw()
+        step = rail._apply_widget_scaling(54)
+        x = rail.canvas.winfo_width()/2
+        event = lambda y: SimpleNamespace(x=x, y=y)
+        rail.pointer_press(event(step/2))
+        self.assertTrue(rail.held)
+        self.assertIs(rail.canvas.grab_current(), rail.canvas)
+        rail.pointer_slide(event(step*1.9))
+        self.assertAlmostEqual(rail.target, 1.4)
+        self.assertEqual(self.app.page, 'library')
+        # Unrelated status/translation updates must not snap an active drag.
+        self.app.update_heading()
+        self.assertAlmostEqual(rail.target, 1.4)
+        rail.pointer_release(event(step*1.9))
+        self.assertEqual(self.app.page, 'tools')
+        self.assertEqual(rail.selected, 1)
+        self.assertFalse(rail.held)
+        self.assertIsNone(rail.canvas.grab_current())
+        # Settle before grabbing the selected lens to drag back above the rail.
+        rail.position = rail.target
+        rail.draw()
+        rail.pointer_press(event(step*1.5))
+        rail.pointer_slide(event(-step*3))
+        self.assertEqual(rail.target, 0.)
+        rail.pointer_release(event(-step*3))
+        self.assertEqual(self.app.page, 'library')
+        self.assertEqual(rail.selected, 0)
+        self.app.withdraw()
+
+    def test_escape_and_focus_loss_cancel_lens_drag(self):
+        self.app.attributes('-alpha', 0)
+        self.app.deiconify()
+        self.app.update()
+        rail = self.app.nav_rail
+        rail.draw()
+        step = rail._apply_widget_scaling(54)
+        x = rail.canvas.winfo_width()/2
+        for binding in ('<Escape>', '<FocusOut>'):
+            rail.pointer_press(SimpleNamespace(x=x, y=step/2))
+            rail.pointer_slide(SimpleNamespace(x=x, y=step*3.5))
+            self.assertTrue(rail.dragging)
+            rail.canvas.event_generate(binding)
+            self.app.update()
+            self.assertFalse(rail.held)
+            self.assertIsNone(rail.canvas.grab_current())
+            self.assertEqual(rail.target, 0.)
+            self.assertEqual(self.app.page, 'library')
+        # Ordinary row clicks still choose on release without starting a drag.
+        rail.pointer_press(SimpleNamespace(x=x, y=step*3.5))
+        self.assertFalse(rail.held)
+        self.assertEqual(self.app.page, 'library')
+        rail.pointer_release(SimpleNamespace(x=x, y=step*3.5))
+        self.assertEqual(self.app.page, 'settings')
+        self.app.withdraw()
 
 
 class FilterTests(unittest.TestCase):

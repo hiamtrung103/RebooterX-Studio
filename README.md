@@ -12,6 +12,9 @@ Copyright (c) Hiamtrung102 2026. Independent from OptimizerNXT and NVIDIA.
 - English and Vietnamese, light and dark themes.
 - Four destinations: Windows, Tools, Activity and Settings. Package categories live in the Windows filter.
 - Larger navigation and package text, a spring-driven glass selection lens and animated glass buttons.
+- The navigation lens has soft capsule lighting with no stroked border. Hold the
+  selected lens and drag vertically; releasing snaps to the nearest tab. Escape or
+  focus loss cancels the drag. Click and keyboard navigation remain available.
 - Paced wheel/scrollbar handling and explicit Windows child-window repainting.
 - Search ignores Vietnamese accents; selections remain visible in a dedicated view.
 - Read package descriptions, compatibility, important consequences and original YAML.
