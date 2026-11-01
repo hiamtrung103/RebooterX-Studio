@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import core
 from ui import StudioApp, category_for, normalize
+from catalog import PACKAGES
+from guidance import GUIDANCE
 
 
 def make_packages():
@@ -111,6 +113,46 @@ class StudioUiTests(unittest.TestCase):
         self.app.update()
         self.app.poll()
         self.assertEqual(self.app.preview_content, 'current')
+
+    def test_four_destinations_guidance_and_memory_confirmation(self):
+        self.assertEqual(set(self.app.nav), {'windows_nav', 'tools', 'activity', 'settings'})
+        self.assertEqual(set(PACKAGES), set(GUIDANCE))
+        self.app.navigate('tools')
+        self.assertEqual(self.app.page, 'tools')
+        self.assertEqual(self.app.memory_clean.cget('state'), 'disabled')
+        with patch('ui.messagebox.askyesno', return_value=False), patch.object(self.app.memory, 'launch') as launch:
+            self.app.launch_memory('full')
+            launch.assert_not_called()
+        self.assertFalse(self.app.busy)
+
+    def test_scroll_drag_resize_and_glass_animation(self):
+        errors = []
+        self.app.report_callback_exception = lambda *args: errors.append(args)
+        self.app.attributes('-alpha', 0)
+        self.app.deiconify()
+        self.app.packages = [dict(p, name=f'{i}-{p["name"]}') for i in range(10) for p in make_packages()]
+        self.app.render()
+        self.app.update()
+        scroll = self.app.option_list
+        self.assertTrue(scroll._can_scroll)
+        for fraction in (.1, .8, .25, 1., 0.):
+            scroll.scrollbar_command('moveto', fraction)
+            deadline = time.perf_counter() + .08
+            while time.perf_counter() < deadline:
+                self.app.update()
+                time.sleep(.004)
+        self.assertLess(scroll._parent_canvas.yview()[0], .01)
+        for key in ('tools', 'settings', 'activity', 'windows_nav'):
+            self.app.navigate(key)
+            deadline = time.perf_counter() + .15
+            while time.perf_counter() < deadline:
+                self.app.update()
+                time.sleep(.004)
+        self.assertEqual(self.app.nav_rail.target, 0.)
+        self.app.change_appearance('Dark')
+        self.app.update()
+        self.assertEqual(errors, [])
+        self.app.withdraw()
 
     def test_visible_resizing_in_both_languages_has_no_callback_errors(self):
         errors = []

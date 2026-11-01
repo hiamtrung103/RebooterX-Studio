@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import queue
+import subprocess
 import threading
 import time
 import tkinter as tk
@@ -18,6 +19,10 @@ import webbrowser
 import customtkinter as ctk
 
 import core
+import memory
+from glass import GlassButton, GlassRail
+from guidance import COPY, GUIDANCE
+from painting import SmoothScrollFrame, invalidate
 from catalog import PACKAGES, TEXT
 from theme import (AMBER, BG, BLUE, EDGE, FIELD, GREEN, INK, MUTED, RAIL, RED,
                    SELECTED, SURFACE, ToolTip, font, icon, line, two_lines, wrap)
@@ -57,7 +62,7 @@ EXTRA = {
     'personalization': ('Personalization', 'Cá nhân hóa'),
     'project_section': ('Project', 'Dự án'),
     'official_project': ('Official OptimizerNXT', 'OptimizerNXT chính thức'),
-    'version': ('OptimizerNXT Studio · 1.0.0', 'OptimizerNXT Studio · 1.0.0'),
+    'version': ('RebooterX Studio · 2.0.0', 'RebooterX Studio · 2.0.0'),
     'downloaded': ('Downloaded {name}', 'Đã tải {name}'),
     'downloading': ('Downloading packages…', 'Đang tải các gói…'),
     'running': ('CLI running in its own console', 'CLI đang chạy ở cửa sổ riêng'),
@@ -89,7 +94,9 @@ EXTRA = {
 CATEGORIES = ('all_options', 'performance', 'privacy', 'system', 'protection', 'selection')
 NAV_ICONS = {'all_options': 'layers', 'performance': 'gauge', 'privacy': 'lock-keyhole',
              'system': 'settings-2', 'protection': 'shield-check', 'selection': 'check-check',
-             'activity': 'history', 'settings': 'sliders-horizontal'}
+             'activity': 'history', 'settings': 'sliders-horizontal',
+             'windows_nav': 'layers', 'tools': 'gauge'}
+EXTRA.update(COPY)
 
 
 def normalize(text):
@@ -125,7 +132,7 @@ class ReviewDialog(ctk.CTkToplevel):
                      text_color=INK).grid(row=0, column=0, sticky='w', padx=26, pady=(22, 4))
         ctk.CTkLabel(self, text=parent.tr('review_meta', count=len(packages)), text_color=MUTED,
                      font=font(parent)).grid(row=1, column=0, sticky='w', padx=26, pady=(0, 16))
-        scroll = ctk.CTkScrollableFrame(self, fg_color='transparent')
+        scroll = SmoothScrollFrame(self, fg_color='transparent')
         scroll.grid(row=2, column=0, sticky='nsew', padx=20)
         for package in packages:
             meta = parent.meta(package)
@@ -155,7 +162,7 @@ class ReviewDialog(ctk.CTkToplevel):
 
 class PackageRow(ctk.CTkFrame):
     def __init__(self, parent, app, package):
-        super().__init__(parent, height=104, corner_radius=8, border_width=1,
+        super().__init__(parent, height=116, corner_radius=8, border_width=1,
                          fg_color=SURFACE, border_color=EDGE)
         self.app, self.package = app, package
         self.name = package['name']
@@ -174,12 +181,12 @@ class PackageRow(ctk.CTkFrame):
         self.copy = ctk.CTkFrame(self, fg_color='transparent')
         self.copy.grid(row=0, column=2, rowspan=2, sticky='nsew', pady=12)
         self.title_label = ctk.CTkLabel(self.copy, text=app.title_for(package), anchor='w',
-                                      justify='left', font=font(app, 14, True), text_color=INK,
+                                      justify='left', font=font(app, 15, True), text_color=INK,
                                       height=24, wraplength=340)
         self.title_label.pack(fill='x')
         self.description = ctk.CTkLabel(self.copy, text=app.description_for(package), anchor='w',
-                                        justify='left', font=font(app, 12), text_color=MUTED,
-                                        height=34, wraplength=340)
+                                        justify='left', font=font(app, 14), text_color=MUTED,
+                                        height=42, wraplength=340)
         self.description.pack(fill='x', pady=(3, 0))
         tk.Misc.bind(self.copy, '<Configure>', self.reflow, add='+')
         meta = app.meta(package)
@@ -230,11 +237,13 @@ class StudioApp(ctk.CTk):
         super().__init__()
         # CTkImage caches PhotoImages, which belong to a single Tcl interpreter.
         icon.cache_clear()
-        self.title('OptimizerNXT Studio')
+        self.title('RebooterX Studio')
         self.configure(fg_color=BG)
         self.geometry(f'{min(1380, self.winfo_screenwidth()-70)}x{min(880, self.winfo_screenheight()-90)}')
         self.minsize(1100, 680)
         self.repo = core.Repository(self.data)
+        self.memory = memory.MemReduct(self.data)
+        self.memory_path = self.memory.installed()
         self.packages = []
         selected = self.settings.get('selected', [])
         self.checked = {name for name in selected if isinstance(name, str)} if isinstance(selected, list) else set()
@@ -261,6 +270,9 @@ class StudioApp(ctk.CTk):
         self.query.trace_add('write', self.query_changed)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.poll_id = self.after(100, self.poll)
+        self.ram_id = self.after(300, self.update_ram)
+        self._resize_job = None
+        tk.Misc.bind(self, '<Configure>', self.schedule_repaint, add='+')
         self.add_log('startup')
         if autoload:
             self.after(150, self.refresh)
@@ -287,13 +299,13 @@ class StudioApp(ctk.CTk):
         return label
 
     def make_button(self, parent, key, command, glyph=None, primary=False, small=False, track=False):
-        button = ctk.CTkButton(parent, text=self.tr(key) if key else '', command=command,
+        button = GlassButton(parent, text=self.tr(key) if key else '', command=command,
                                image=icon(glyph, 17, white=primary) if glyph else None,
                                width=36 if small else 124, height=36 if small else 40,
                                corner_radius=18 if small else 8, border_width=0,
                                fg_color=BLUE if primary else FIELD, text_color='white' if primary else INK,
                                hover_color='#006FE0' if primary else ('#DDE4EF', '#373A45'),
-                               font=font(self, 13, primary), border_spacing=10)
+                               font=font(self, 14, primary), border_spacing=10)
         if key:
             self.translations.append((button, key))
         if track:
@@ -308,7 +320,7 @@ class StudioApp(ctk.CTk):
     def build(self):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
-        self.sidebar = ctk.CTkFrame(self, width=210, corner_radius=0, fg_color=RAIL)
+        self.sidebar = ctk.CTkFrame(self, width=228, corner_radius=0, fg_color=RAIL)
         self.sidebar.grid(row=0, column=0, sticky='ns')
         self.sidebar.grid_propagate(False)
         self.sidebar.grid_columnconfigure(0, weight=1)
@@ -319,32 +331,15 @@ class StudioApp(ctk.CTk):
                      fg_color=BLUE, corner_radius=12).pack(side='left', padx=(0, 10))
         names = ctk.CTkFrame(brand, fg_color='transparent')
         names.pack(side='left')
-        ctk.CTkLabel(names, text='OptimizerNXT', font=font(self, 16, True), text_color=INK,
+        ctk.CTkLabel(names, text='RebooterX', font=font(self, 19, True), text_color=INK,
                      anchor='w').pack(fill='x')
         ctk.CTkLabel(names, text='STUDIO', font=font(self, 10, True), text_color=MUTED,
                      anchor='w', height=14).pack(fill='x')
-        self.label(self.sidebar, 'library', text_color=MUTED, font=font(self, 10, True)).grid(row=1, column=0, sticky='w', padx=25, pady=(0, 10))
-        nav = ctk.CTkFrame(self.sidebar, fg_color='transparent')
-        nav.grid(row=2, column=0, sticky='ew', padx=12)
-        self.nav = {}
-        for key in CATEGORIES:
-            button = ctk.CTkButton(nav, text=self.tr(key), image=icon(NAV_ICONS[key], 18),
-                                   command=lambda key=key: self.navigate(key), anchor='w',
-                                   height=42, corner_radius=21, fg_color='transparent',
-                                   text_color=INK, hover_color=('#E3E7EE', '#2D3038'),
-                                   font=font(self, 13), border_spacing=13)
-            button.pack(fill='x', pady=2)
-            self.nav[key] = button
-        self.label(self.sidebar, 'preferences', text_color=MUTED, font=font(self, 10, True)).grid(row=3, column=0, sticky='w', padx=25, pady=(30, 10))
-        secondary = ctk.CTkFrame(self.sidebar, fg_color='transparent')
-        secondary.grid(row=4, column=0, sticky='new', padx=12)
-        for key in ('activity', 'settings'):
-            button = ctk.CTkButton(secondary, text=self.tr(key), image=icon(NAV_ICONS[key], 18),
-                                   command=lambda key=key: self.navigate(key), anchor='w', height=42,
-                                   corner_radius=21, fg_color='transparent', text_color=INK,
-                                   hover_color=('#E3E7EE', '#2D3038'), font=font(self), border_spacing=13)
-            button.pack(fill='x', pady=2)
-            self.nav[key] = button
+        self.label(self.sidebar, 'preferences', text_color=MUTED, font=font(self, 11, True)).grid(row=1, column=0, sticky='w', padx=25, pady=(0, 10))
+        self.nav_rail = GlassRail(self.sidebar, self, ('windows_nav', 'tools', 'activity', 'settings'), NAV_ICONS)
+        self.nav_rail.grid(row=2, column=0, sticky='ew', padx=12)
+        self.nav_rail.grid_propagate(False)
+        self.nav = self.nav_rail.items
         bottom = ctk.CTkFrame(self.sidebar, fg_color='transparent')
         bottom.grid(row=5, column=0, sticky='sew', padx=20, pady=22)
         self.cli_badge = ctk.CTkLabel(bottom, text='', anchor='w', font=font(self, 12), text_color=GREEN)
@@ -374,6 +369,8 @@ class StudioApp(ctk.CTk):
         self.subtitle.pack(fill='x', pady=(4, 0))
         self.refresh_button = self.icon_button(self.header, 'refresh-cw', self.refresh, 'refresh', track=True)
         self.refresh_button.pack(side='right', pady=8)
+        self.icon_button(self.header, 'info', self.show_about, 'about').pack(side='right', padx=(8, 8))
+        self.make_button(self.header, 'github', lambda: webbrowser.open(core.STUDIO_URL), 'github').pack(side='right', padx=(8, 0))
         self.body = ctk.CTkFrame(self.main, fg_color='transparent')
         self.body.grid(row=1, column=0, sticky='nsew')
         self.body.grid_columnconfigure(0, weight=1)
@@ -381,6 +378,7 @@ class StudioApp(ctk.CTk):
         self.build_library()
         self.build_activity()
         self.build_settings()
+        self.build_tools()
         self.build_footer()
         self.library_page.grid(row=0, column=0, sticky='nsew')
 
@@ -388,7 +386,7 @@ class StudioApp(ctk.CTk):
         self.library_page = ctk.CTkFrame(self.body, fg_color='transparent')
         self.library_page.grid_columnconfigure(0, weight=1)
         self.library_page.grid_columnconfigure(2, minsize=300)
-        self.library_page.grid_rowconfigure(1, weight=1)
+        self.library_page.grid_rowconfigure(2, weight=1)
         toolbar = ctk.CTkFrame(self.library_page, fg_color='transparent')
         toolbar.grid(row=0, column=0, sticky='ew', pady=(0, 16))
         search = ctk.CTkFrame(toolbar, fg_color=FIELD, corner_radius=8, height=40)
@@ -403,15 +401,23 @@ class StudioApp(ctk.CTk):
         self.select_all_button.pack(side='left', padx=(0, 6))
         self.clear_button = self.icon_button(toolbar, 'x', self.clear_selection, 'clear', track=True)
         self.clear_button.pack(side='left')
-        self.option_list = ctk.CTkScrollableFrame(self.library_page, fg_color='transparent', corner_radius=0,
+        filters = ctk.CTkFrame(self.library_page, fg_color='transparent')
+        filters.grid(row=1, column=0, sticky='ew', pady=(0, 14))
+        self.category_filter = ctk.CTkOptionMenu(filters, values=[self.tr(k) for k in CATEGORIES],
+            command=self.filter_category, width=210, height=36, corner_radius=8,
+            fg_color=FIELD, button_color=FIELD, text_color=INK, dropdown_fg_color=SURFACE,
+            dropdown_text_color=INK, font=font(self, 14), dropdown_font=font(self, 14))
+        self.category_filter.pack(side='left')
+        self.make_button(filters, 'help', self.show_help, 'circle-alert').pack(side='right')
+        self.option_list = SmoothScrollFrame(self.library_page, fg_color='transparent', corner_radius=0,
                                                 scrollbar_button_color=('#C4CBD6', '#4C515D'),
                                                 scrollbar_button_hover_color=('#A9B3C2', '#69717F'))
-        self.option_list.grid(row=1, column=0, sticky='nsew')
+        self.option_list.grid(row=2, column=0, sticky='nsew')
         self.option_list.grid_columnconfigure(0, weight=1)
         self.empty_label = ctk.CTkLabel(self.option_list, text='', text_color=MUTED, font=font(self, 15), height=180)
-        ctk.CTkFrame(self.library_page, width=1, height=1, corner_radius=0, fg_color=EDGE).grid(row=0, column=1, rowspan=2, sticky='ns', padx=(20, 20))
+        ctk.CTkFrame(self.library_page, width=1, height=1, corner_radius=0, fg_color=EDGE).grid(row=0, column=1, rowspan=3, sticky='ns', padx=(16, 16))
         self.inspector = ctk.CTkFrame(self.library_page, fg_color='transparent', width=300)
-        self.inspector.grid(row=0, column=2, rowspan=2, sticky='nsew')
+        self.inspector.grid(row=0, column=2, rowspan=3, sticky='nsew')
         self.inspector.grid_columnconfigure(0, weight=1)
         self.inspector.grid_rowconfigure(2, weight=1)
         self.detail_title = ctk.CTkLabel(self.inspector, text='', text_color=INK, font=font(self, 18, True),
@@ -425,11 +431,11 @@ class StudioApp(ctk.CTk):
                                                 font=font(self, 12))
         self.detail_tabs.grid(row=1, column=0, sticky='ew', pady=(0, 18))
         self.detail_tabs.set('Details')
-        self.detail_scroll = ctk.CTkScrollableFrame(self.inspector, fg_color='transparent', corner_radius=0, width=280)
+        self.detail_scroll = SmoothScrollFrame(self.inspector, fg_color='transparent', corner_radius=0, width=280)
         self.detail_scroll.grid(row=2, column=0, sticky='nsew')
         self.detail_scroll.grid_columnconfigure(0, weight=1)
         self.detail_description = ctk.CTkLabel(self.detail_scroll, text='', text_color=MUTED,
-                                              font=font(self, 13), justify='left', anchor='nw', wraplength=266)
+                                              font=font(self, 14), justify='left', anchor='nw', wraplength=266)
         self.detail_description.grid(row=0, column=0, sticky='ew', pady=(0, 20))
         self.impact_label = ctk.CTkLabel(self.detail_scroll, text='', text_color=AMBER,
                                         font=font(self, 12), wraplength=266, justify='left', anchor='w')
@@ -476,7 +482,7 @@ class StudioApp(ctk.CTk):
         self.log.grid(row=1, column=0, sticky='nsew')
 
     def build_settings(self):
-        self.settings_page = ctk.CTkScrollableFrame(self.body, fg_color='transparent', corner_radius=0)
+        self.settings_page = SmoothScrollFrame(self.body, fg_color='transparent', corner_radius=0)
         self.settings_page.grid_columnconfigure(0, weight=1)
         self.label(self.settings_page, 'engine_section', font=font(self, 17, True), anchor='w').grid(row=0, column=0, sticky='ew', pady=(4, 16))
         self.label(self.settings_page, 'exe', text_color=MUTED, anchor='w').grid(row=1, column=0, sticky='ew', pady=(0, 8))
@@ -513,6 +519,144 @@ class StudioApp(ctk.CTk):
         self.label(self.settings_page, 'version', text_color=MUTED, anchor='w').grid(row=10, column=0, sticky='w', pady=(0, 14))
         self.make_button(self.settings_page, 'official_project', lambda: webbrowser.open(core.PROJECT_URL), 'arrow-up-right').grid(row=11, column=0, sticky='w', pady=(0, 14))
         self.make_button(self.settings_page, 'data_folder', lambda: self.open_folder(self.data), 'folder-open').grid(row=12, column=0, sticky='w', pady=(0, 24))
+        self.make_button(self.settings_page, 'help', self.show_help, 'circle-alert').grid(row=13, column=0, sticky='w', pady=(0, 24))
+
+    def build_tools(self):
+        self.tools_page = SmoothScrollFrame(self.body, fg_color='transparent', corner_radius=0)
+        self.tools_page.grid_columnconfigure(0, weight=1)
+        self.label(self.tools_page, 'memory_title', font=font(self, 22, True), anchor='w').grid(row=0, column=0, sticky='ew', pady=(4, 8))
+        self.memory_badge = ctk.CTkLabel(self.tools_page, text='', text_color=MUTED, font=font(self, 13), anchor='w')
+        self.memory_badge.grid(row=1, column=0, sticky='ew', pady=(0, 18))
+        self.ram_label = ctk.CTkLabel(self.tools_page, text='RAM', font=font(self, 19, True), text_color=INK, anchor='w')
+        self.ram_label.grid(row=2, column=0, sticky='ew', pady=(0, 10))
+        self.ram_bar = ctk.CTkProgressBar(self.tools_page, height=7, fg_color=FIELD, progress_color=GREEN)
+        self.ram_bar.grid(row=3, column=0, sticky='ew', pady=(0, 18))
+        self.ram_bar.set(0)
+        note = self.label(self.tools_page, 'memory_note', font=font(self, 14), text_color=MUTED, justify='left', anchor='w', wraplength=700)
+        note.grid(row=4, column=0, sticky='ew', pady=(0, 18))
+        actions = ctk.CTkFrame(self.tools_page, fg_color='transparent')
+        actions.grid(row=5, column=0, sticky='ew', pady=(0, 12))
+        self.memory_download = self.make_button(actions, 'memory_download', self.install_memory, 'download', primary=True, track=True)
+        self.memory_download.pack(side='left', padx=(0, 10))
+        self.memory_open = self.make_button(actions, 'memory_open', lambda: self.launch_memory(), 'arrow-up-right', track=True)
+        self.memory_open.pack(side='left', padx=(0, 10))
+        self.make_button(actions, 'seven_zip', lambda: webbrowser.open('https://www.7-zip.org/'), 'arrow-up-right').pack(side='left')
+        cleanup = ctk.CTkFrame(self.tools_page, fg_color='transparent')
+        cleanup.grid(row=6, column=0, sticky='ew', pady=(0, 24))
+        self.memory_clean = self.make_button(cleanup, 'memory_clean', lambda: self.launch_memory('default'), 'zap', track=True)
+        self.memory_clean.pack(side='left', padx=(0, 10))
+        self.memory_full = self.make_button(cleanup, 'memory_full', lambda: self.launch_memory('full'), 'zap', track=True)
+        self.memory_full.pack(side='left', padx=(0, 10))
+        self.make_button(cleanup, 'official_source', lambda: webbrowser.open(memory.PROJECT), 'arrow-up-right').pack(side='left')
+        line(self.tools_page).grid(row=7, column=0, sticky='ew', pady=(0, 24))
+        self.label(self.tools_page, 'nvidia_title', font=font(self, 21, True), anchor='w').grid(row=8, column=0, sticky='ew', pady=(0, 12))
+        nvidia_note = self.label(self.tools_page, 'nvidia_note', font=font(self, 14), text_color=MUTED, justify='left', anchor='w', wraplength=700)
+        nvidia_note.grid(row=9, column=0, sticky='ew', pady=(0, 18))
+        graphics = ctk.CTkFrame(self.tools_page, fg_color='transparent')
+        graphics.grid(row=10, column=0, sticky='ew', pady=(0, 24))
+        self.make_button(graphics, 'nvidia_app', lambda: self.open_nvidia('app'), 'arrow-up-right').pack(side='left', padx=(0, 10))
+        self.make_button(graphics, 'nvidia_panel', lambda: self.open_nvidia('panel'), 'arrow-up-right').pack(side='left')
+        line(self.tools_page).grid(row=11, column=0, sticky='ew', pady=(0, 24))
+        self.label(self.tools_page, 'help', font=font(self, 21, True), anchor='w').grid(row=12, column=0, sticky='ew', pady=(0, 12))
+        instructions = self.label(self.tools_page, 'help_text', font=font(self, 14), text_color=MUTED, justify='left', anchor='w', wraplength=700)
+        instructions.grid(row=13, column=0, sticky='ew', pady=(0, 24))
+        for label in (note, nvidia_note, instructions):
+            tk.Misc.bind(label, '<Configure>', lambda event, label=label: wrap(label, event.width, 16), add='+')
+
+    def update_ram(self):
+        try:
+            status = memory.ram_status()
+            if status:
+                total, available, load = status
+                gb = 1024 ** 3
+                self.ram_label.configure(text=self.tr('ram', used=(total-available)/gb, total=total/gb, available=available/gb))
+                self.ram_bar.set(load / 100)
+        except OSError:
+            self.ram_label.configure(text='RAM: unavailable')
+        self.ram_id = self.after(1500, self.update_ram)
+
+    def update_memory_status(self):
+        self.memory_badge.configure(text=self.tr('memory_ready' if self.memory_path else 'memory_missing'),
+                                    text_color=GREEN if self.memory_path else MUTED)
+        for button in (self.memory_open, self.memory_clean, self.memory_full):
+            button.configure(state='normal' if self.memory_path and not self.busy else 'disabled')
+
+    def install_memory(self):
+        self.start_worker(lambda: self.events.put(('memory_installed', self.memory.install())))
+
+    def launch_memory(self, clean=None):
+        if self.busy:
+            return
+        if clean and not messagebox.askyesno('Mem Reduct', self.tr('memory_confirm'), parent=self):
+            return
+        def task():
+            code = self.memory.launch(clean)
+            if clean:
+                self.events.put(('memory_done', code))
+        self.start_worker(task)
+
+    def open_nvidia(self, tool):
+        self.start_worker(lambda: self.find_and_open_nvidia(tool))
+
+    def find_and_open_nvidia(self, tool):
+        candidates = []
+        for variable in ('ProgramFiles', 'ProgramFiles(x86)'):
+            base = Path(os.environ.get(variable, 'C:/Program Files')) / 'NVIDIA Corporation'
+            candidates.append(base / ('NVIDIA App/CEF/NVIDIA App.exe' if tool == 'app' else 'Control Panel Client/nvcplui.exe'))
+        executable = next((path for path in candidates if path.is_file()), None)
+        if executable:
+            subprocess.Popen([str(executable)], cwd=executable.parent)
+            return
+        if tool == 'panel':
+            try:
+                result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                    '(Get-AppxPackage -Name NVIDIACorp.NVIDIAControlPanel).PackageFamilyName'],
+                    capture_output=True, text=True, timeout=8, creationflags=subprocess.CREATE_NO_WINDOW)
+                family = result.stdout.strip()
+                if family.startswith('NVIDIACorp.NVIDIAControlPanel_') and '\n' not in family:
+                    os.startfile('shell:AppsFolder\\' + family + '!NVIDIACorp.NVIDIAControlPanel')
+                    return
+            except (OSError, subprocess.SubprocessError):
+                pass
+        self.events.put(('nvidia_missing', None))
+
+    def text_dialog(self, title, content):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(self.tr(title))
+        dialog.configure(fg_color=BG)
+        dialog.geometry('720x650')
+        dialog.minsize(540, 440)
+        dialog.transient(self)
+        dialog.grid_rowconfigure(1, weight=1)
+        dialog.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(dialog, text=self.tr(title), font=font(self, 23, True), text_color=INK).grid(row=0, column=0, sticky='w', padx=24, pady=20)
+        scroll = SmoothScrollFrame(dialog, fg_color='transparent')
+        scroll.grid(row=1, column=0, sticky='nsew', padx=20)
+        scroll.grid_columnconfigure(0, weight=1)
+        label = ctk.CTkLabel(scroll, text=self.tr(content), font=font(self, 15), text_color=INK,
+                             wraplength=630, justify='left', anchor='nw')
+        label.grid(row=0, column=0, sticky='ew')
+        tk.Misc.bind(label, '<Configure>', lambda event: wrap(label, event.width, 16), add='+')
+        self.make_button(dialog, 'github', lambda: webbrowser.open(core.STUDIO_URL), 'github').grid(row=2, column=0, sticky='e', padx=24, pady=20)
+        return dialog
+
+    def show_about(self):
+        return self.text_dialog('about', 'about_text')
+
+    def show_help(self):
+        return self.text_dialog('help', 'help_text')
+
+    def schedule_repaint(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        if self._resize_job is not None:
+            self.after_cancel(self._resize_job)
+        self._resize_job = self.after(40, self.finish_repaint)
+
+    def finish_repaint(self):
+        self._resize_job = None
+        self.update_idletasks()
+        invalidate(self)
 
     def build_footer(self):
         self.footer = ctk.CTkFrame(self.main, fg_color='transparent')
@@ -534,6 +678,8 @@ class StudioApp(ctk.CTk):
                                          fg_color=FIELD, mode='indeterminate')
         self.progress.pack(side='right')
         self.progress.set(0)
+        ctk.CTkLabel(status_row, text='© Hiamtrung102 2026', font=font(self, 12),
+                     text_color=MUTED).pack(side='right', padx=16)
 
     def translate(self):
         alive = []
@@ -549,6 +695,9 @@ class StudioApp(ctk.CTk):
         language = 'Tiếng Việt' if self.lang == 'vi' else 'English'
         self.language.set(language)
         self.settings_language.set(language)
+        self.category_filter.configure(values=[self.tr(key) for key in CATEGORIES])
+        self.category_filter.set(self.tr(self.category))
+        self.update_memory_status()
         appearance_values = [self.tr('light'), self.tr('dark')]
         self.appearance_control.configure(values=appearance_values)
         self.appearance_control.set(appearance_values[self.appearance == 'Dark'])
@@ -565,9 +714,9 @@ class StudioApp(ctk.CTk):
             self.subtitle.configure(text=self.tr('catalog_meta', total=len(self.packages)))
         else:
             self.heading.configure(text=self.tr(self.page))
-            self.subtitle.configure(text=self.tr('version') if self.page == 'settings' else self.tr('log_count', count=len(self.logs)))
+            self.subtitle.configure(text=self.tr('tools_meta') if self.page == 'tools' else self.tr('version') if self.page == 'settings' else self.tr('log_count', count=len(self.logs)))
         for key, button in self.nav.items():
-            active = key == (self.category if self.page == 'library' else self.page)
+            active = key == ('windows_nav' if self.page == 'library' else self.page)
             count = len(self.checked) if key == 'selection' else None
             caption = self.tr(key) + (f'   {count}' if count else '')
             button.configure(text=caption, fg_color=SELECTED if active else 'transparent',
@@ -575,17 +724,23 @@ class StudioApp(ctk.CTk):
                              image=icon(NAV_ICONS[key], 18, accent=active))
 
     def navigate(self, key):
-        for page in (self.library_page, self.activity_page, self.settings_page):
+        if key == 'windows_nav':
+            key = self.category
+        for page in (self.library_page, self.activity_page, self.settings_page, self.tools_page):
             page.grid_remove()
         if key in CATEGORIES:
             self.category = key
+            self.category_filter.set(self.tr(key))
             self.page = 'library'
             self.library_page.grid(row=0, column=0, sticky='nsew')
             self.render(reset_scroll=True)
         else:
             self.page = key
-            (self.activity_page if key == 'activity' else self.settings_page).grid(row=0, column=0, sticky='nsew')
+            {'activity': self.activity_page, 'settings': self.settings_page, 'tools': self.tools_page}[key].grid(row=0, column=0, sticky='nsew')
         self.update_heading()
+
+    def filter_category(self, value):
+        self.navigate(next(key for key in CATEGORIES if self.tr(key) == value))
 
     def visible_packages(self):
         query = normalize(self.query.get().strip())
@@ -607,19 +762,27 @@ class StudioApp(ctk.CTk):
         canvas = self.option_list._parent_canvas
         scroll = 0.0 if reset_scroll else canvas.yview()[0]
         visible = self.visible_packages()
-        for row in self.rows.values():
-            row.destroy()
-        self.rows.clear()
+        wanted = {package['name'] for package in visible}
+        for name in list(self.rows):
+            if name not in wanted:
+                self.rows.pop(name).destroy()
         self.empty_label.grid_remove()
         for index, package in enumerate(visible):
-            row = PackageRow(self.option_list, self, package)
+            row = self.rows.get(package['name'])
+            if row is None:
+                row = PackageRow(self.option_list, self, package)
+                self.rows[package['name']] = row
+            else:
+                row.title_label.configure(text=self.title_for(package))
+                row.reflow(type('Layout', (), {'width': row.copy.winfo_width()})())
+                row.sync()
             row.grid(row=index, column=0, sticky='ew', pady=(0, 10), padx=(0, 5))
-            self.rows[package['name']] = row
         if not visible:
             self.empty_label.configure(text=self.tr('empty_selection' if self.category == 'selection' else 'empty_search'))
             self.empty_label.grid(row=0, column=0, sticky='ew')
         self.option_list.update_idletasks()
         canvas.yview_moveto(scroll)
+        self.option_list.schedule_geometry()
         self.update_selection()
 
     def update_selection(self):
@@ -668,7 +831,9 @@ class StudioApp(ctk.CTk):
             self.detail_scroll.grid(row=2, column=0, sticky='nsew')
         if package:
             meta = self.meta(package)
-            self.detail_description.configure(text=self.description_for(package))
+            context = GUIDANCE.get(Path(package['name']).stem, (
+                'Read the upstream YAML before applying this package.', 'Đọc YAML gốc trước khi áp dụng gói này.'))[self.lang == 'vi']
+            self.detail_description.configure(text=self.description_for(package) + '\n\n' + self.tr('context') + '\n' + context)
             self.impact_label.configure(text=self.tr('sensitive', impact=self.tr(meta[5])) if meta[5] else '',
                                         text_color=RED if meta[5] in ('security', 'restore') else AMBER)
             self.meta_values['availability'].configure(text='Windows ' + meta[4] if meta[4] != 'All' else self.tr('all_windows'))
@@ -677,7 +842,7 @@ class StudioApp(ctk.CTk):
             self.detail_meta.grid()
             self.source_button.grid()
         else:
-            self.detail_description.configure(text='')
+            self.detail_description.configure(text=self.tr('help_text'))
             self.impact_label.configure(text='')
             self.detail_meta.grid_remove()
             self.source_button.grid_remove()
@@ -732,6 +897,7 @@ class StudioApp(ctk.CTk):
         ctk.set_appearance_mode(self.appearance)
         self.appearance_control.set(self.tr('dark') if self.appearance == 'Dark' else self.tr('light'))
         self.theme_button.configure(image=icon('sun' if self.appearance == 'Dark' else 'moon', 18))
+        self.schedule_repaint()
         self.save()
 
     def update_cli_status(self):
@@ -786,6 +952,7 @@ class StudioApp(ctk.CTk):
             self.progress.stop()
             self.progress.set(0)
         self.update_selection()
+        self.update_memory_status()
 
     def start_worker(self, task, status='working'):
         if self.busy:
@@ -889,6 +1056,14 @@ class StudioApp(ctk.CTk):
                     self.exe.set(value)
                     self.save()
                     self.add_log('cli_done')
+                elif kind == 'memory_installed':
+                    self.memory_path = value
+                    self.update_memory_status()
+                    self.add_log('memory_ready')
+                elif kind == 'memory_done':
+                    self.add_log('memory_done', code=value)
+                elif kind == 'nvidia_missing':
+                    messagebox.showinfo(self.tr('nvidia_title'), self.tr('nvidia_missing'), parent=self)
                 elif kind == 'downloaded':
                     self.download_count += 1
                     self.add_log('downloaded', name=value)
@@ -934,4 +1109,5 @@ class StudioApp(ctk.CTk):
             return
         self.save()
         self.after_cancel(self.poll_id)
+        self.after_cancel(self.ram_id)
         self.destroy()

@@ -1,4 +1,4 @@
-"""Launch OptimizerNXT Studio."""
+"""Launch RebooterX Studio."""
 import sys
 import tkinter as tk
 from tkinter import messagebox
@@ -10,7 +10,7 @@ def main():
     except ImportError as error:
         root = tk.Tk()
         root.withdraw()
-        messagebox.showerror('OptimizerNXT Studio',
+        messagebox.showerror('RebooterX Studio',
             'Run Setup.cmd to install dependencies, then open Start.cmd.\n'
             'Chạy Setup.cmd để cài thư viện, sau đó mở Start.cmd.\n\n' + str(error))
         root.destroy()

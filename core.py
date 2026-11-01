@@ -16,7 +16,8 @@ import urllib.parse
 import urllib.request
 
 BASE = Path(__file__).resolve().parent
-DATA = Path(os.environ.get("OPTIMIZERNXT_DATA_DIR", str(BASE / "data")))
+DATA = Path(os.environ.get("REBOOTERX_DATA_DIR", os.environ.get("OPTIMIZERNXT_DATA_DIR", str(BASE / "data"))))
+STUDIO_URL = "https://github.com/hiamtrung103/RebooterX-Studio"
 REPO = "hellzerg/optimizerNXT"
 PROJECT_URL = f"https://github.com/{REPO}"
 API = f"https://api.github.com/repos/{REPO}"
@@ -46,7 +47,7 @@ class Repository:
         for attempt in range(3):
             try:
                 request = urllib.request.Request(url, headers={
-                    "User-Agent": "OptimizerNXT-Python-Manager/1.0",
+                    "User-Agent": "RebooterX-Studio/2.0",
                     "Accept": "application/vnd.github+json" if url.startswith(API) else "*/*",
                 })
                 with urllib.request.urlopen(request, timeout=25) as response:
@@ -170,18 +171,23 @@ class Repository:
 
 
 def run_cli(executable: Path, folder: Path, started=lambda: None) -> int:
+    return run_program(executable, ["apply", str(folder.resolve(strict=True))], folder, started, console=True)
+
+
+def run_program(executable: Path, args: list[str], folder: Path, started=lambda: None,
+                console=False, wait=True) -> int:
     if os.name != "nt":
         raise OSError("Windows is required.")
     executable = executable.resolve(strict=True)
     folder = folder.resolve(strict=True)
-    arguments = subprocess.list2cmdline(["apply", str(folder)])
+    arguments = subprocess.list2cmdline(args)
     shell = ctypes.WinDLL("shell32", use_last_error=True)
     shell.IsUserAnAdmin.restype = wintypes.BOOL
     if shell.IsUserAnAdmin():
-        with subprocess.Popen([str(executable), "apply", str(folder)], cwd=folder,
-                              creationflags=subprocess.CREATE_NEW_CONSOLE) as process:
-            started()
-            return process.wait()
+        process = subprocess.Popen([str(executable), *args], cwd=folder,
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE if console else 0)
+        started()
+        return process.wait() if wait else 0
 
     class SHELLEXECUTEINFOW(ctypes.Structure):
         _fields_ = [("cbSize", wintypes.DWORD), ("fMask", ctypes.c_ulong),
@@ -214,6 +220,8 @@ def run_cli(executable: Path, folder: Path, started=lambda: None) -> int:
     kernel.CloseHandle.restype = wintypes.BOOL
     try:
         started()
+        if not wait:
+            return 0
         if kernel.WaitForSingleObject(info.hProcess, 0xFFFFFFFF) == 0xFFFFFFFF:
             raise ctypes.WinError(ctypes.get_last_error())
         code = wintypes.DWORD()
