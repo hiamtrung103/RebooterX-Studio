@@ -1,2 +1,4 @@
 customtkinter>=5.2.2,<6
 Pillow>=10,<13
+PyYAML>=6,<7
+pywin32>=306,<400; sys_platform == 'win32'

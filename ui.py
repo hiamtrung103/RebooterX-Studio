@@ -10,6 +10,7 @@ import queue
 import subprocess
 import threading
 import time
+import tempfile
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox
@@ -22,6 +23,7 @@ import core
 import memory
 from glass import GlassButton, GlassRail
 from guidance import COPY, GUIDANCE
+from execution import History
 from painting import SmoothScrollFrame, invalidate
 from catalog import PACKAGES, TEXT
 from theme import (AMBER, BG, BLUE, EDGE, FIELD, GREEN, INK, MUTED, RAIL, RED,
@@ -62,7 +64,7 @@ EXTRA = {
     'personalization': ('Personalization', 'Cá nhân hóa'),
     'project_section': ('Project', 'Dự án'),
     'official_project': ('Official OptimizerNXT', 'OptimizerNXT chính thức'),
-    'version': ('RebooterX Studio · 2.0.0', 'RebooterX Studio · 2.0.0'),
+    'version': ('RebooterX Studio · 2.1.0', 'RebooterX Studio · 2.1.0'),
     'downloaded': ('Downloaded {name}', 'Đã tải {name}'),
     'downloading': ('Downloading packages…', 'Đang tải các gói…'),
     'running': ('CLI running in its own console', 'CLI đang chạy ở cửa sổ riêng'),
@@ -73,12 +75,12 @@ EXTRA = {
     'run_short': ('Run selected', 'Chạy đã chọn'),
     'review_title': ('Review selected packages', 'Xem lại các gói đã chọn'),
     'review_meta': ('{count} packages · Administrator', '{count} gói · Quyền quản trị'),
-    'review_note': ('Changes can require a restart. Automatic undo is unavailable.', 'Thay đổi có thể cần khởi động lại. Không có hoàn tác tự động.'),
+    'review_note': ('Changes can require a restart. Restore is available only when a complete supported pre-run snapshot can be created.', 'Có thể cần khởi động lại. Chỉ khôi phục được khi tạo thành công bản sao lưu đầy đủ cho gói được hỗ trợ.'),
     'cancel': ('Cancel', 'Hủy'),
     'confirm_run': ('Apply packages', 'Áp dụng các gói'),
     'download_success': ('Saved {count} packages', 'Đã lưu {count} gói'),
     'cli_finished': ('CLI closed · exit code {code}', 'CLI đã đóng · mã thoát {code}'),
-    'cli_output': ('Check the CLI console/logs for each operation’s result.', 'Xem cửa sổ/log CLI để biết kết quả từng thao tác.'),
+    'cli_output': ('Per-package results and logs are saved locally. Inspect package details for restore availability.', 'Kết quả từng gói và log đã lưu trên máy. Xem chi tiết gói để biết khả năng khôi phục.'),
     'selection_changed': ('Selection saved', 'Đã lưu lựa chọn'),
     'clear_logs': ('Clear log', 'Xóa nhật ký'),
     'startup': ('Studio started', 'Studio đã khởi động'),
@@ -91,12 +93,33 @@ EXTRA = {
     'basic_impact': ('System settings', 'Thiết lập hệ thống'),
 }
 
-CATEGORIES = ('all_options', 'performance', 'privacy', 'system', 'protection', 'selection')
+CATEGORIES = ('all_options', 'performance', 'privacy', 'system', 'protection', 'selection', 'applied_filter')
 NAV_ICONS = {'all_options': 'layers', 'performance': 'gauge', 'privacy': 'lock-keyhole',
              'system': 'settings-2', 'protection': 'shield-check', 'selection': 'check-check',
              'activity': 'history', 'settings': 'sliders-horizontal',
              'windows_nav': 'layers', 'tools': 'gauge'}
 EXTRA.update(COPY)
+EXTRA.update({
+    'applied_filter': ('Previously applied', 'Gói đã chạy'),
+    'state_applied': ('Applied', 'Đã chạy'),
+    'state_never': ('Not run', 'Chưa chạy'),
+    'state_failed': ('Failed', 'Có lỗi'),
+    'state_uncertain': ('Unconfirmed', 'Chưa xác nhận'),
+    'state_skipped': ('Skipped / partial', 'Bỏ qua / một phần'),
+    'state_running': ('Running', 'Đang chạy'),
+    'state_restored': ('Restored', 'Đã khôi phục'),
+    'state_restore_failed': ('Restore failed', 'Khôi phục lỗi'),
+    'state_older': ('Older revision applied', 'Đã chạy bản cũ'),
+    'run_history': ('Local execution record', 'Lịch sử chạy trên máy'),
+    'history_note': ('CLI history, not a live Windows-state scan. Unchecking prevents another run; it does not undo changes.', 'Lịch sử CLI, không phải kiểm tra trạng thái Windows hiện tại. Bỏ tích giúp không chạy lại, không hoàn tác thay đổi.'),
+    'auto_close': ('Close optimizer console automatically when finished', 'Tự đóng cửa sổ optimizer khi chạy xong'),
+    'auto_close_note': ('Results and logs stay on this PC. Each package runs separately. Turn this off to keep the final console summary open.', 'Kết quả và log lưu trên máy. Mỗi gói chạy riêng. Tắt tùy chọn này để giữ cửa sổ tổng kết cuối cùng.'),
+    'undo': ('Restore previous settings', 'Khôi phục thiết lập trước'),
+    'undo_ready': ('A pre-run registry snapshot is available.', 'Có bản sao lưu Registry trước khi chạy.'),
+    'undo_missing': ('Restore unavailable. Requires a supported registry-only package and a complete pre-run backup.', 'Chưa có khôi phục. Cần gói thuần Registry được hỗ trợ và bản sao lưu đầy đủ trước khi chạy.'),
+    'undo_confirm': ('Restore the registry snapshot made immediately before this package ran? It includes the recorded subtrees and permissions. Later changes block automatic restore. A restart may be needed.\n\n{title}', 'Khôi phục bản sao lưu Registry ngay trước lần chạy? Gồm các nhánh đã lưu và quyền truy cập. Tool sẽ chặn nếu phát hiện thay đổi mới. Có thể cần khởi động lại.\n\n{title}'),
+    'history_updated': ('Local package history updated', 'Đã lưu lịch sử các gói trên máy'),
+})
 
 
 def normalize(text):
@@ -191,8 +214,9 @@ class PackageRow(ctk.CTkFrame):
         tk.Misc.bind(self.copy, '<Configure>', self.reflow, add='+')
         meta = app.meta(package)
         self.compatibility = ctk.CTkLabel(self, text='Win ' + meta[4] if meta[4] != 'All' else 'Windows',
-                                          font=font(app, 11), text_color=MUTED, width=66)
+                                          font=font(app, 11), text_color=MUTED, width=98)
         self.compatibility.grid(row=0, column=3, sticky='ne', padx=(6, 12), pady=(14, 0))
+        ToolTip(self.compatibility, lambda: app.tr('history_note'))
         risk = meta[5]
         if risk:
             self.risk = ctk.CTkLabel(self, image=icon('shield-alert' if risk == 'security' else 'circle-alert', 16),
@@ -218,6 +242,13 @@ class PackageRow(ctk.CTkFrame):
         self.configure(border_color=BLUE if self.app.current == self.name else EDGE,
                        fg_color=SELECTED if checked else SURFACE)
         self.check.configure(state='disabled' if self.app.busy else 'normal')
+        status = self.app.history.status(self.package)
+        meta = self.app.meta(self.package)
+        text = self.app.tr('state_'+status) if status != 'never' else 'Win '+meta[4] if meta[4] != 'All' else 'Windows'
+        if status == 'applied':
+            text = '✓ ' + text
+        self.compatibility.configure(text=text, wraplength=100,
+            text_color=GREEN if status == 'applied' else RED if status in ('failed', 'restore_failed') else AMBER if status in ('older', 'skipped', 'uncertain') else MUTED)
 
 
 class StudioApp(ctk.CTk):
@@ -242,6 +273,9 @@ class StudioApp(ctk.CTk):
         self.geometry(f'{min(1380, self.winfo_screenwidth()-70)}x{min(880, self.winfo_screenheight()-90)}')
         self.minsize(1100, 680)
         self.repo = core.Repository(self.data)
+        self.history = History(self.data)
+        self.history_tick = 0
+        self.auto_close = tk.BooleanVar(value=self.settings.get('auto_close', True) is not False)
         self.memory = memory.MemReduct(self.data)
         self.memory_path = self.memory.installed()
         self.packages = []
@@ -450,7 +484,11 @@ class StudioApp(ctk.CTk):
             value.grid(row=index * 2 + 1, column=0, sticky='w', pady=(0, 20))
             self.meta_values[key] = value
         self.source_button = self.make_button(self.detail_scroll, 'official_source', self.open_source, 'arrow-up-right')
-        self.source_button.grid(row=3, column=0, sticky='ew', pady=(8, 18))
+        self.source_button.grid(row=5, column=0, sticky='ew', pady=(8, 18))
+        self.history_label = ctk.CTkLabel(self.detail_scroll, text='', text_color=MUTED, font=font(self, 13), justify='left', anchor='w', wraplength=266)
+        self.history_label.grid(row=3, column=0, sticky='ew', pady=(8, 16))
+        self.undo_note = ctk.CTkLabel(self.detail_scroll, text='', text_color=MUTED, font=font(self, 13), justify='left', anchor='w', wraplength=266)
+        self.undo_note.grid(row=4, column=0, sticky='ew', pady=(0, 10))
         self.yaml_host = ctk.CTkFrame(self.inspector, fg_color='transparent')
         self.yaml_host.grid_columnconfigure(0, weight=1)
         self.yaml_host.grid_rowconfigure(0, weight=1)
@@ -463,7 +501,9 @@ class StudioApp(ctk.CTk):
         self.yaml._textbox.configure(xscrollcommand=self.yaml_x.set)
         self.detail_select = self.make_button(self.inspector, 'select_package', self.toggle_current, 'check-check', track=True)
         self.detail_select.grid(row=3, column=0, sticky='ew', pady=(18, 0))
-        for label in (self.detail_title, self.detail_description, self.impact_label):
+        self.undo_button = self.make_button(self.inspector, 'undo', self.restore_current, 'history', track=True)
+        self.undo_button.grid(row=4, column=0, sticky='ew', pady=(10, 0))
+        for label in (self.detail_title, self.detail_description, self.impact_label, self.history_label, self.undo_note):
             tk.Misc.bind(label, '<Configure>', lambda event, label=label: wrap(label, event.width, 8), add='+')
 
     def build_activity(self):
@@ -520,6 +560,14 @@ class StudioApp(ctk.CTk):
         self.make_button(self.settings_page, 'official_project', lambda: webbrowser.open(core.PROJECT_URL), 'arrow-up-right').grid(row=11, column=0, sticky='w', pady=(0, 14))
         self.make_button(self.settings_page, 'data_folder', lambda: self.open_folder(self.data), 'folder-open').grid(row=12, column=0, sticky='w', pady=(0, 24))
         self.make_button(self.settings_page, 'help', self.show_help, 'circle-alert').grid(row=13, column=0, sticky='w', pady=(0, 24))
+        self.auto_close_switch = ctk.CTkSwitch(self.settings_page, text=self.tr('auto_close'), variable=self.auto_close,
+            command=self.save, font=font(self, 14), text_color=INK, progress_color=BLUE)
+        self.auto_close_switch.grid(row=14, column=0, sticky='w', pady=(8, 10))
+        self.translations.append((self.auto_close_switch, 'auto_close'))
+        auto_note = self.label(self.settings_page, 'auto_close_note', text_color=MUTED, font=font(self, 14),
+                               justify='left', anchor='w', wraplength=700)
+        auto_note.grid(row=15, column=0, sticky='ew', pady=(0, 24))
+        tk.Misc.bind(auto_note, '<Configure>', lambda event: wrap(auto_note, event.width, 16), add='+')
 
     def build_tools(self):
         self.tools_page = SmoothScrollFrame(self.body, fg_color='transparent', corner_radius=0)
@@ -747,6 +795,7 @@ class StudioApp(ctk.CTk):
         return [p for p in self.packages
                 if (self.category == 'all_options' or
                     self.category == 'selection' and p['name'] in self.checked or
+                    self.category == 'applied_filter' and bool(self.history.item(p['name']).get('applied')) or
                     self.category == category_for(p['name']))
                 and (not query or query in normalize(' '.join((p['name'], *self.meta(p)[:4]))))]
 
@@ -792,6 +841,7 @@ class StudioApp(ctk.CTk):
         selected = self.current in self.checked
         self.detail_select.configure(text=self.tr('deselect_package' if selected else 'select_package'),
                                      state='normal' if self.current and not self.busy else 'disabled')
+        self.undo_button.configure(state='normal' if self.current and self.history.undo(self.current) and not self.busy else 'disabled')
         self.status.configure(text=self.tr(self.status_key))
         self.update_heading()
 
@@ -831,6 +881,12 @@ class StudioApp(ctk.CTk):
             self.detail_scroll.grid(row=2, column=0, sticky='nsew')
         if package:
             meta = self.meta(package)
+            last = self.history.item(package['name']).get('last') or {}
+            self.history_label.configure(text=self.tr('run_history')+'\n'+self.tr('state_'+self.history.status(package))+
+                ('\n'+last.get('time', '') if last else '')+
+                ('\n'+last['error'] if last.get('error') else '')+'\n\n'+self.tr('history_note'))
+            self.undo_note.configure(text=self.tr('undo_ready' if self.history.undo(package['name']) else 'undo_missing')+
+                ('\n'+last['undo_note'] if last.get('undo_note') else ''))
             context = GUIDANCE.get(Path(package['name']).stem, (
                 'Read the upstream YAML before applying this package.', 'Đọc YAML gốc trước khi áp dụng gói này.'))[self.lang == 'vi']
             self.detail_description.configure(text=self.description_for(package) + '\n\n' + self.tr('context') + '\n' + context)
@@ -842,6 +898,8 @@ class StudioApp(ctk.CTk):
             self.detail_meta.grid()
             self.source_button.grid()
         else:
+            self.history_label.configure(text='')
+            self.undo_note.configure(text='')
             self.detail_description.configure(text=self.tr('help_text'))
             self.impact_label.configure(text='')
             self.detail_meta.grid_remove()
@@ -911,6 +969,7 @@ class StudioApp(ctk.CTk):
             core.atomic_write(self.settings_file, json.dumps({
                 'language': self.lang, 'appearance': self.appearance, 'selected': sorted(self.checked),
                 'exe': self.exe.get(),
+                'auto_close': self.auto_close.get(),
             }, ensure_ascii=False, indent=2).encode('utf-8'))
         except OSError as error:
             self.add_log(None, raw=str(error))
@@ -1012,6 +1071,7 @@ class StudioApp(ctk.CTk):
         self.download_count = 0
         self.download_total = len(selected)
         self.navigate('activity')
+        auto_close = self.auto_close.get()
 
         def task():
             actual_exe = self.repo.download_cli() if acquire_cli else executable
@@ -1020,9 +1080,47 @@ class StudioApp(ctk.CTk):
             folder = self.repo.download_packages(selected, lambda name: self.events.put(('downloaded', name)))
             self.events.put(('folder', (folder, len(selected))))
             if apply:
-                code = core.run_cli(actual_exe, folder, lambda: self.events.put(('started', None)))
+                self.history.begin(folder, selected)
+                try:
+                    code = core.run_cli(actual_exe, folder, lambda: self.events.put(('started', None)), auto_close=auto_close)
+                finally:
+                    self.history.finish(folder)
+                    self.events.put(('history', None))
                 self.events.put(('ended', code))
         self.start_worker(task, 'downloading')
+
+    def restore_current(self):
+        if self.busy or not self.current or not self.history.undo(self.current):
+            return
+        package = next(p for p in self.packages if p['name'] == self.current)
+        if not messagebox.askyesno(self.tr('undo'), self.tr('undo_confirm', title=self.title_for(package)), parent=self):
+            return
+        source = self.history.item(self.current).get('last') or {}
+        if source.get('status') == 'restored':
+            source = self.history.item(self.current)['applied']
+        auto_close = self.auto_close.get()
+        self.navigate('activity')
+        def task():
+            runs = self.data / 'runs'
+            runs.mkdir(parents=True, exist_ok=True)
+            folder = Path(tempfile.mkdtemp(prefix='restore-', dir=runs))
+            core.atomic_write(folder / 'restore-source.json', json.dumps(source, ensure_ascii=False).encode('utf-8'))
+            self.history.begin(folder, [source])
+            try:
+                code = core.run_host(folder, ['--package', source['name']], auto_close=auto_close)
+            finally:
+                self.history.finish(folder)
+                self.events.put(('history', None))
+            self.events.put(('ended', code))
+        self.start_worker(task)
+
+    def sync_history(self):
+        for package in self.packages:
+            if self.history.status(package) == 'applied':
+                self.checked.discard(package['name'])
+        self.render()
+        self.show_detail()
+        self.save()
 
     def poll(self):
         try:
@@ -1030,6 +1128,9 @@ class StudioApp(ctk.CTk):
                 kind, value = self.events.get_nowait()
                 if kind == 'finished':
                     self.set_busy(False)
+                elif kind == 'history':
+                    self.sync_history()
+                    self.add_log('history_updated')
                 elif kind == 'catalog':
                     self.packages, warning = value
                     self.checked.intersection_update(p['name'] for p in self.packages)
@@ -1085,6 +1186,9 @@ class StudioApp(ctk.CTk):
                     messagebox.showerror(self.tr('error'), value, parent=self)
         except queue.Empty:
             pass
+        self.history_tick += 1
+        if self.busy and self.history_tick % 10 == 0 and self.history.recover():
+            self.sync_history()
         self.poll_id = self.after(100, self.poll)
 
     def open_source(self):

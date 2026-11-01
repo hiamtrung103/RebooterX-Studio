@@ -33,7 +33,8 @@ Requires Windows, Python 3.10+ with Tkinter and the .NET runtime required by Opt
 2. Open `Start.cmd`.
 3. Download the official CLI in **Settings**, or browse to a copy you already have.
 4. Select packages and choose **Run selected**. Review the list and accept Windows UAC.
-5. Read the CLI console for results. The CLI may wait for a key before closing.
+5. Read per-package results in Studio. The optimizer console closes automatically;
+   turn this off in Settings to keep the final summary open.
 
 Alternatively:
 
@@ -48,7 +49,8 @@ python app.py
 2. Trong **Cài đặt**, tải CLI chính thức hoặc chọn file `optimizerNXT.exe` đã có.
 3. Vào **Windows**, chọn nhóm trong bộ lọc, tích các gói cần dùng. Bấm một gói để xem tác dụng, đánh đổi và YAML.
 4. Chọn **Chạy đã chọn**, xem lại danh sách và chấp nhận UAC của Windows.
-5. Đọc kết quả ở cửa sổ CLI. CLI có thể cần nhấn phím trước khi đóng.
+5. Xem kết quả từng gói trong tool. Mặc định cửa sổ optimizer tự đóng;
+   có thể tắt trong Cài đặt để giữ cửa sổ tổng kết.
 
 Nút **Tải xuống** chỉ tải file, không thay đổi thiết lập Windows. Ngôn ngữ, giao diện,
 đường dẫn CLI và lựa chọn được lưu cho lần sau. Không có gói nào được chọn mặc định
@@ -87,13 +89,48 @@ packages would invalidate their signatures, so Studio does neither. The download
 YAML is authoritative; translated summaries describe the known upstream packages.
 
 Some packages disable security, updates or synchronization, or delete restore points.
-Consequences are displayed in the inspector and review dialog. There is no automatic
-undo. For example, `enable-game-mode` also disables Xbox/Game Bar/DVR, while the Edge
+Consequences are displayed in the inspector and review dialog. Rollback is limited to
+supported packages with a complete pre-run snapshot. For example, `enable-game-mode` also disables Xbox/Game Bar/DVR, while the Edge
 telemetry package also changes SmartScreen.
 
 Studio does not interpret the CLI's exit code as proof that every tweak succeeded.
 Check the upstream console/log output for each operation. A running CLI remains
 independent if you close Studio.
+
+## Local History And Restore
+
+Each selected package executes separately with its unchanged YAML and signature. An
+isolated copy of the chosen CLI writes logs under that package's run folder. The host
+releases the CLI's final `ReadKey` only after its log reports `Exiting.`; it never sends
+keyboard input to other windows. The host closes automatically by default. Settings
+can keep the final summary open instead. No executable or YAML is patched.
+
+`data/history.json` records the last attempt, exact YAML blob hash, timestamp, previous
+completed runs and pending run folders. `run-result.json` and per-package `.log` files
+remain in `data/runs/`. Restarting Studio imports available results from pending runs,
+including runs that finished after the UI closed. Downloading alone never marks a
+package applied. A completed stage with verified YAML, executed steps and no reported
+warnings/errors gets **Applied / Đã chạy**; errors, skipped steps, incomplete logs and
+older package revisions have separate states. This is execution evidence, not a scan
+of current Windows settings. Older unrecorded runs are not inferred from selections.
+Successful packages are unchecked to avoid accidental repeats; explicitly rechecking
+allows another run. Use the Windows filter **Previously applied / Gói đã chạy**.
+
+**Restore previous settings / Khôi phục thiết lập trước** is enabled only when a
+complete, sealed snapshot exists. Supported packages contain only understood registry
+steps under HKCU/HKLM, and all target keys must already exist and be readable. Before
+execution, Windows `RegSaveKey` saves the affected subtrees, including permissions.
+After execution, fingerprints include values, subkeys, owners and DACLs. Restore checks
+the backup checksum, Windows user and all current fingerprints before any write.
+Changed state blocks automatic restore rather than overwriting subsequent user/driver
+changes. `RegRestoreKey` uses no force flag; Windows may refuse keys that are in use.
+Failures remain visible and backups remain local. A restart may be required.
+
+There is no guessed inverse for scripts, service combinations, removed applications,
+deleted restore points, missing pre-run backups or unsupported operations. A pure
+registry package such as `disable-vbs` may support restore when its existing keys can
+be backed up; `uninstall-onedrive` and `disable-system-restore` do not. Always inspect
+the actual availability shown after the run. Keep separate backups for wider recovery.
 
 ## Local Data
 
@@ -122,6 +159,11 @@ python -m unittest discover -s tests -v
 
 Backend tests use mocked downloads and temporary directories. UI tests use an isolated
 data folder and mock execution; they never apply Windows tweaks or clean memory.
+The console integration test compiles a harmless C# fixture when the Windows .NET
+Framework compiler is present; it exercises real console input and auto-close without
+running the optimizer. Registry restoration tests mock Windows writes and verify
+conflict refusal and the no-force restore call. Actual native registry restoration
+must be validated separately on a disposable elevated Windows environment.
 Tests cover checksum failure, architecture selection, exact cleanup arguments, confirmation
 cancellation, four-item navigation, scrolling/dragging, glass animation and resizing in both languages.
 

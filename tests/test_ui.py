@@ -9,6 +9,7 @@ import core
 from ui import StudioApp, category_for, normalize
 from catalog import PACKAGES
 from guidance import GUIDANCE
+from execution import History
 
 
 def make_packages():
@@ -113,6 +114,37 @@ class StudioUiTests(unittest.TestCase):
         self.app.update()
         self.app.poll()
         self.assertEqual(self.app.preview_content, 'current')
+
+    def test_success_badge_persistence_unchecking_and_restore_cancel(self):
+        package = self.app.packages[0]
+        folder = Path(self.temp.name) / 'run'
+        folder.mkdir()
+        undo = folder / 'undo.json'
+        undo.write_text('{}')
+        def fake_run(*_args, **kwargs):
+            self.assertTrue(kwargs['auto_close'])
+            result = {**package, 'status': 'applied', 'folder': str(folder), 'time': '2026-11-01', 'undo': str(undo)}
+            (folder / 'run-result.json').write_text(json.dumps({'results': {package['name']: result}, 'complete': True}))
+            return 0
+        self.app.checked = {package['name']}
+        self.app.exe.set(__file__)
+        with patch.object(self.app, 'confirm_run', return_value=True), \
+             patch.object(self.app.repo, 'download_packages', return_value=folder), \
+             patch('core.run_cli', side_effect=fake_run):
+            self.app.prepare(True)
+            self.drain()
+        self.assertNotIn(package['name'], self.app.checked)
+        self.assertIn('Đã chạy', self.app.rows[package['name']].compatibility.cget('text'))
+        self.assertEqual(History(Path(self.temp.name)).status(package), 'applied')
+        self.app.navigate('applied_filter')
+        self.assertEqual(self.app.visible_packages(), [package])
+        self.app.current = package['name']
+        with patch('ui.messagebox.askyesno', return_value=False), patch('core.run_host') as run:
+            self.app.restore_current()
+            run.assert_not_called()
+        self.app.auto_close.set(False)
+        self.app.save()
+        self.assertFalse(json.loads(self.app.settings_file.read_text(encoding='utf-8'))['auto_close'])
 
     def test_four_destinations_guidance_and_memory_confirmation(self):
         self.assertEqual(set(self.app.nav), {'windows_nav', 'tools', 'activity', 'settings'})

@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -170,8 +171,19 @@ class Repository:
         return path
 
 
-def run_cli(executable: Path, folder: Path, started=lambda: None) -> int:
-    return run_program(executable, ["apply", str(folder.resolve(strict=True))], folder, started, console=True)
+def run_cli(executable: Path, folder: Path, started=lambda: None, auto_close=True) -> int:
+    return run_host(folder, ['--exe', str(executable.resolve(strict=True))], started, auto_close)
+
+
+def run_host(folder: Path, args, started=lambda: None, auto_close=True):
+    from rollback import user_sid
+    python = Path(sys.executable)
+    if python.name.lower() == 'pythonw.exe':
+        python = python.with_name('python.exe')
+    command = [str(BASE / 'runner.py'), '--folder', str(folder.resolve(strict=True)), '--sid', user_sid(), *args]
+    if auto_close:
+        command.append('--auto-close')
+    return run_program(python, command, folder, started, console=True)
 
 
 def run_program(executable: Path, args: list[str], folder: Path, started=lambda: None,

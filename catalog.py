@@ -73,7 +73,7 @@ TEXT = {
     "impact_prefix": ("Consequences to review: ", "Ảnh hưởng cần xem: "),
     "download_done": ("Downloaded {count} packages to:\n{folder}", "Đã tải {count} gói vào:\n{folder}"),
     "cli_done": ("Official CLI downloaded and SHA-256 checked.", "Đã tải CLI chính thức và kiểm tra SHA-256."),
-    "cli_start": ("CLI console opened. Review its output; it may ask you to press a key before closing.", "Đã mở cửa sổ CLI. Xem kết quả tại đó; CLI có thể yêu cầu nhấn phím trước khi đóng."),
+    "cli_start": ("Optimizer console opened. Each selected package runs separately; results are saved locally.", "Đã mở cửa sổ optimizer. Chạy riêng từng gói đã chọn; kết quả lưu trên máy."),
     "cli_end": ("CLI console closed (exit code {code}). Check CLI output/logs for individual results.", "Cửa sổ CLI đã đóng (mã thoát {code}). Xem đầu ra/log CLI để biết kết quả từng thao tác."),
     "cli_needed": ("The CLI is missing. Download the official release now?", "Chưa có CLI. Tải bản phát hành chính thức ngay?"),
     "not_windows": ("Applying packages requires Windows.", "Cần Windows để áp dụng các gói."),
