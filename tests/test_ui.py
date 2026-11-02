@@ -116,6 +116,46 @@ class StudioUiTests(unittest.TestCase):
         self.app.poll()
         self.assertEqual(self.app.preview_content, 'current')
 
+    def test_nvidia_preview_invalidation_and_async_unavailable_driver(self):
+        dialog = self.app.edit_nvidia()
+        self.assertIs(self.app.edit_nvidia(), dialog)
+        dialog.preset()
+        self.assertTrue(all(check.get() for check in dialog.checks.values()))
+        dialog.scope.set(dialog.t('Global · all applications', 'Toàn cục · mọi ứng dụng'))
+        with patch.object(dialog.service, 'plan', side_effect=RuntimeError('No NVIDIA GPU')):
+            dialog.read()
+            deadline = time.monotonic() + 3
+            while dialog.busy and time.monotonic() < deadline:
+                self.app.update()
+                time.sleep(.01)
+        self.assertFalse(dialog.busy)
+        self.assertIn('No NVIDIA GPU', dialog.preview.get('1.0', 'end'))
+        self.assertEqual(dialog.apply_button.cget('state'), 'disabled')
+        dialog.plan = {'old': 'preview'}
+        with patch('nvidia_ui.messagebox.askyesno', return_value=False), patch.object(dialog.service, 'apply') as apply:
+            dialog.apply()
+            apply.assert_not_called()
+        dialog.changed()
+        self.assertIsNone(dialog.plan)
+        dialog.close()
+
+    def test_installed_card_survives_reload_and_clears_after_restore(self):
+        package = self.app.packages[0]
+        applied = {**package, 'status': 'applied', 'time': '2026-11-02'}
+        self.app.history.value['packages'][package['name']] = {'applied': applied, 'last': applied}
+        self.app.history.save()
+        self.app.history = History(Path(self.temp.name))
+        row = self.app.rows[package['name']]
+        row.sync()
+        self.assertEqual(row.card.cget('border_width'), 2)
+        self.assertEqual(row.installed_badge.winfo_manager(), 'place')
+        self.app.history.value['packages'][package['name']] = {'last': {'status': 'restored'}}
+        self.app.history.save()
+        self.app.history = History(Path(self.temp.name))
+        row.sync()
+        self.assertEqual(row.card.cget('border_width'), 1)
+        self.assertEqual(row.installed_badge.winfo_manager(), '')
+
     def test_success_badge_persistence_unchecking_and_restore_cancel(self):
         package = self.app.packages[0]
         folder = Path(self.temp.name) / 'run'
@@ -136,6 +176,9 @@ class StudioUiTests(unittest.TestCase):
             self.drain()
         self.assertNotIn(package['name'], self.app.checked)
         self.assertIn('Đã chạy', self.app.rows[package['name']].compatibility.cget('text'))
+        self.assertEqual(self.app.rows[package['name']].card.cget('border_width'), 2)
+        self.assertIn('Đã cài đặt', self.app.rows[package['name']].installed_badge.cget('text'))
+        self.assertEqual(self.app.rows[package['name']].installed_badge.winfo_manager(), 'place')
         self.assertEqual(History(Path(self.temp.name)).status(package), 'applied')
         self.app.navigate('applied_filter')
         self.assertEqual(self.app.visible_packages(), [package])
@@ -147,8 +190,8 @@ class StudioUiTests(unittest.TestCase):
         self.app.save()
         self.assertFalse(json.loads(self.app.settings_file.read_text(encoding='utf-8'))['auto_close'])
 
-    def test_four_destinations_guidance_and_memory_confirmation(self):
-        self.assertEqual(set(self.app.nav), {'windows_nav', 'tools', 'activity', 'settings'})
+    def test_five_destinations_guidance_and_memory_confirmation(self):
+        self.assertEqual(set(self.app.nav), {'windows_nav', 'tools', 'nvidia', 'activity', 'settings'})
         self.assertEqual(set(PACKAGES), set(GUIDANCE))
         self.app.navigate('tools')
         self.assertEqual(self.app.page, 'tools')
@@ -175,7 +218,7 @@ class StudioUiTests(unittest.TestCase):
                 self.app.update()
                 time.sleep(.004)
         self.assertLess(scroll._parent_canvas.yview()[0], .01)
-        for key in ('tools', 'settings', 'activity', 'windows_nav'):
+        for key in ('tools', 'nvidia', 'settings', 'activity', 'windows_nav'):
             self.app.navigate(key)
             deadline = time.perf_counter() + .15
             while time.perf_counter() < deadline:
@@ -260,10 +303,10 @@ class StudioUiTests(unittest.TestCase):
             self.assertEqual(rail.target, 0.)
             self.assertEqual(self.app.page, 'library')
         # Ordinary row clicks still choose on release without starting a drag.
-        rail.pointer_press(SimpleNamespace(x=x, y=step*3.5))
+        rail.pointer_press(SimpleNamespace(x=x, y=step*4.5))
         self.assertFalse(rail.held)
         self.assertEqual(self.app.page, 'library')
-        rail.pointer_release(SimpleNamespace(x=x, y=step*3.5))
+        rail.pointer_release(SimpleNamespace(x=x, y=step*4.5))
         self.assertEqual(self.app.page, 'settings')
         self.app.withdraw()
 

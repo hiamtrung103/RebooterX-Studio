@@ -5,6 +5,16 @@ from tkinter import messagebox
 
 
 def main():
+    from bootstrap import ensure_admin
+    launch_status = ensure_admin()
+    if launch_status is not None:
+        return launch_status
+    if '--runner' in sys.argv:
+        from bootstrap import dispatch_runner
+        return dispatch_runner()
+    if len(sys.argv) == 3 and sys.argv[1] == '--self-test':
+        from bootstrap import self_test
+        return self_test(sys.argv[2])
     try:
         from ui import StudioApp
     except ImportError as error:

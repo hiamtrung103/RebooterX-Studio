@@ -10,12 +10,20 @@ Copyright (c) Hiamtrung102 2026. Independent from OptimizerNXT and NVIDIA.
 ## Features
 
 - English and Vietnamese, light and dark themes.
-- Four destinations: Windows, Tools, Activity and Settings. Package categories live in the Windows filter.
+- Five destinations: Windows, Tools, NVIDIA, Activity and Settings. NVIDIA has its
+  own full-page profile editor; package categories live in the Windows filter.
+- Previously applied packages have a green outline and a protruding Installed
+  badge. Older revisions have their own label. Records survive restarts; a
+  successful restore removes the applied marker. This is execution history,
+  not a live scan of Windows settings.
 - Larger navigation and package text, a spring-driven glass selection lens and animated glass buttons.
 - The navigation lens has soft capsule lighting with no stroked border. Hold the
   selected lens and drag vertically; releasing snaps to the nearest tab. Escape or
   focus loss cancels the drag. Click and keyboard navigation remain available.
-- Paced wheel/scrollbar handling and explicit Windows child-window repainting.
+- Coalesced wheel/scrollbar events. Native repaint repair runs after scrolling
+  settles, without a synchronous redraw/erase of every child on each frame.
+- Navigation reuses canvas items, captions and lens images while moving, with
+  softer capsule lighting and a lighter shadow.
 - Search ignores Vietnamese accents; selections remain visible in a dedicated view.
 - Read package descriptions, compatibility, important consequences and original YAML.
 - Download YAML together with its `.sig` from the same upstream commit.
@@ -25,12 +33,27 @@ Copyright (c) Hiamtrung102 2026. Independent from OptimizerNXT and NVIDIA.
 - Separate download-only action, CLI path selection and activity history for the session.
 - Bilingual usage instructions and context/tradeoffs for all 28 known packages.
 - Live RAM usage and official Mem Reduct portable download, opening and explicit one-time cleanup.
-- Launch installed NVIDIA App / Control Panel with guidance for per-game settings.
+- NVIDIA game/global profiles through the installed driver's public NVAPI:
+  power management, shader cache size and texture filtering quality, with previews,
+  local backups and verified restore. Launch NVIDIA App / Control Panel separately.
 - GitHub and information buttons identify public source, downloads and verification limits.
 
 ## Run
 
-Requires Windows, Python 3.10+ with Tkinter and the .NET runtime required by OptimizerNXT.
+**Portable onefile EXE:** download `RebooterX-Studio.exe` from
+[Releases](https://github.com/hiamtrung103/RebooterX-Studio/releases). It runs on
+64-bit Windows 10/11 without Python or a separate library folder. Windows requests
+administrator approval at startup (`requireAdministrator` manifest plus a runtime
+check). Cancelling UAC prevents the app from starting. No tweaks are auto-applied.
+The separately downloaded OptimizerNXT CLI still needs its required .NET runtime.
+
+Packaged settings/history/backups live in `%LOCALAPPDATA%\RebooterX-Studio`, outside
+the temporary onefile extraction directory. Source runs keep using `data/` beside
+the source. `REBOOTERX_DATA_DIR` can select an existing data folder for either
+version; retain that folder to preserve historical status and rollback backups.
+
+**Run from source:** requires Windows and Python 3.10+ with Tkinter. Source launches
+also request administrator approval before opening the UI.
 
 1. Run `Setup.cmd` once to create a local environment and install dependencies.
 2. Open `Start.cmd`.
@@ -80,10 +103,63 @@ opens the original application with administrator approval. **Clean once** invok
 RebooterX does not configure scheduled/automatic cleanup. Cleaning can cause stutter
 or reload cached data; lower RAM usage does not guarantee higher game performance.
 
-The NVIDIA section opens tools already installed on the PC. In NVIDIA App, select
-Graphics, the game and Driver Settings. In Control Panel, use Manage 3D settings,
-Program Settings, add the game executable, change one setting, and Apply. Compare
-frame times and FPS on your own hardware. This version does not edit driver profiles.
+In the dedicated **NVIDIA** tab, select a game executable (NVIDIA matches its
+filename) or explicitly choose global settings. Tick the settings to change, then
+use **Read / preview → Apply**. The performance preset fills **Prefer maximum
+performance**, **Unlimited**, and **High performance**, plus the optional driver
+settings below; it does not apply anything
+until you review it. Existing profiles may be shared by several executables; the
+preview shows their count. Shader Cache Size is always global, including in game
+mode. Unlimited uses disk space, not VRAM. Higher power draw, heat and reduced
+texture quality are possible; measure frame times and FPS on your hardware.
+
+Additional controls and preset values:
+
+| Driver setting | Performance preset | Scope / tradeoff |
+| --- | --- | --- |
+| Vertical sync | Off | May remove a refresh-rate limit; allows tearing; review separately for G-SYNC |
+| Max Frame Rate | Off | Removes the driver cap, not in-game/other caps; optional FPS limits remain available |
+| Anisotropic sample optimization | On | DirectX; possible texture-quality tradeoff |
+| Trilinear optimization | On | DirectX; high-quality texture mode may ignore it |
+| Threaded optimization | Auto | OpenGL; forcing On can regress some games |
+| Antialiasing - FXAA | Off | Removes driver FXAA; possible jagged edges; in-game AA is separate |
+| Preferred refresh rate | Highest available | Requests display Hz, not more rendered FPS; may be unavailable with VRR |
+
+There is no guaranteed FPS increase. The page includes manual guides for NIS
+(lower-resolution upscaling), Low Latency Mode, in-game Reflex and Full-screen
+scaling. Reflex is a latency feature and overrides the driver low-latency mode.
+NVIDIA does not expose Low Latency Mode through the public NVAPI SDK used here,
+so the app guides the user to Control Panel instead of writing undocumented IDs.
+References: [NVIDIA Control Panel help](https://www.nvidia.com/content/Control-Panel-Help/vLatest/en-us/mergedProjects/3D%20Settings/Manage_3D_Settings_%28reference%29.htm),
+[latency guide](https://www.nvidia.com/en-us/geforce/guides/system-latency-optimization-guide/),
+[NVAPI guidance](https://forums.developer.nvidia.com/t/low-latency-mode-setting/241104).
+Trilinear's inverted SDK flag is cross-checked against
+[Profile Inspector's metadata](https://github.com/Orbmu2k/nvidiaProfileInspector/blob/master/nvidiaProfileInspector/CustomSettingNames.xml).
+
+The adapter uses the installed `nvapi64.dll` / `nvapi.dll` from Windows System32,
+with ABI and constants from [NVIDIA's public SDK](https://github.com/NVIDIA/nvapi).
+No external driver/profile editor is downloaded. Unsupported driver settings and
+missing NVIDIA GPUs report errors. If NVAPI returns permission error -137, restart
+Studio as administrator. All chosen changes are staged in one driver session;
+the session is saved only after every setting is accepted and the local backup
+is written. Applied settings are read back in a fresh session for verification.
+
+Backups live in `data/nvidia-backups`. **Restore last change** restores previous
+explicit values or removes our override to return to inherited/default values.
+Restore stops if any target value/profile changed after applying. A newly created
+game profile/application association remains after its settings are restored.
+These backups are separate from OptimizerNXT's package history.
+
+**Full-screen scaling is manual**: use the included instructions and Control Panel
+button: Adjust desktop size and position → select monitor → Full-screen → GPU →
+optionally Override the scaling mode → Apply. This can stretch other aspect ratios.
+The game's own Fullscreen mode is configured inside the game. Studio does not
+automatically set display scaling or the legacy image-preview Performance slider;
+the latter is separate from the advanced 3D profile settings above.
+
+NVIDIA write/restore behavior is covered by simulated driver tests. The development
+machine exposes Intel UHD and a virtual display, so real NVIDIA driver writes have
+not been hardware-tested here.
 
 ## Package Behavior
 
@@ -168,7 +244,12 @@ running the optimizer. Registry restoration tests mock Windows writes and verify
 conflict refusal and the no-force restore call. Actual native registry restoration
 must be validated separately on a disposable elevated Windows environment.
 Tests cover checksum failure, architecture selection, exact cleanup arguments, confirmation
-cancellation, four-item navigation, scrolling/dragging, glass animation and resizing in both languages.
+cancellation, five-item navigation, scrolling/dragging, glass animation and resizing in both languages.
+
+Build the administrator-only onefile executable with `powershell -File Build.ps1`.
+The build runs the tests and uses the checked-in PyInstaller spec. It bundles Tk,
+CustomTkinter themes/fonts/icons, Pillow, YAML, pywin32 and the internal console
+runner. The upstream optimizer and Mem Reduct remain separate optional downloads.
 
 ## Credits And License
 

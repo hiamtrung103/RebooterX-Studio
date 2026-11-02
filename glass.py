@@ -183,7 +183,7 @@ def rail_lens(width, height, dark):
     """Soft capsule lighting, without a stroked outline or decorative arc."""
     scale = 2
     size = (width*scale, height*scale)
-    base = '#243747' if dark else '#DFEDFC'
+    base = '#243747' if dark else '#DEEBF8'
     surface = Image.new('RGBA', size)
     pixels = surface.load()
     for y in range(size[1]):
@@ -193,7 +193,7 @@ def rail_lens(width, height, dark):
             crown = -.67+.18*nx*nx
             light = math.exp(-((ny-crown)/.24)**2)*math.exp(-(nx/.96)**4)
             shade = math.exp(-((ny-.75)/.28)**2)
-            color = blend(base, '#FFFFFF', light*(.075 if dark else .14))
+            color = blend(base, '#FFFFFF', light*.065)
             color = blend(color, '#0D1725', shade*.035)
             pixels[x, y] = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))+(255,)
     mask = Image.new('L', size)
@@ -204,7 +204,7 @@ def rail_lens(width, height, dark):
     shadow_mask = Image.new('L', (width+padding*2, height+padding*2))
     shadow_mask.paste(surface.getchannel('A'), (padding, padding+2))
     shadow = Image.new('RGBA', shadow_mask.size, (5, 18, 36, 0))
-    shadow.putalpha(shadow_mask.filter(ImageFilter.GaussianBlur(height*.11)).point(lambda a: round(a*(.16 if dark else .09))))
+    shadow.putalpha(shadow_mask.filter(ImageFilter.GaussianBlur(height*.11)).point(lambda a: round(a*(.13 if dark else .055))))
     return surface, shadow, padding
 
 
@@ -225,6 +225,8 @@ class GlassRail(ctk.CTkFrame):
         self.timer = AnimationTimer()
         self.items = {key: RailItem(self, i) for i, key in enumerate(keys)}
         self.photos = []
+        self._lens_photos = {}
+        self._caption_key = None
         self.canvas = tk.Canvas(self, highlightthickness=0, bd=0, takefocus=1, cursor='hand2')
         self.canvas.pack(fill='both', expand=True)
         self.canvas.bind('<Configure>', lambda _: self.draw())
@@ -366,21 +368,38 @@ class GlassRail(ctk.CTkFrame):
         dark = self._get_appearance_mode() == 'dark'
         background = self._apply_appearance_mode(RAIL)
         canvas.configure(bg=background)
-        canvas.delete('all')
+        if not canvas.find_withtag('rail_lens'):
+            canvas.create_image(0, 0, tags='rail_lens')
+            for i in range(len(self.keys)):
+                canvas.create_image(0, 0, tags=f'rail_icon_{i}')
+                canvas.create_text(0, 0, anchor='w', tags=f'rail_text_{i}')
         lens_width = max(12, round(width-22*scale))
         lens_height = max(12, round(42*scale))
         surface, shadow, padding = rail_lens(lens_width, lens_height, dark)
         travel = 1-math.exp(-abs(self.velocity)/12)
         sw = round(lens_width*(1+.025*self.hold_amount+.015*travel))
         sh = round(lens_height*(1+.12*self.hold_amount+.13*travel))
-        stretched = surface.resize((sw, sh), Image.Resampling.BICUBIC)
-        local = Image.new('RGBA', (sw+padding*2, sh+padding*2))
-        local.alpha_composite(shadow.resize(local.size, Image.Resampling.BICUBIC))
-        local.alpha_composite(stretched, (padding, padding))
+        image_key = (lens_width, lens_height, sw, sh, dark)
+        if image_key not in self._lens_photos:
+            stretched = surface.resize((sw, sh), Image.Resampling.BICUBIC)
+            local = Image.new('RGBA', (sw+padding*2, sh+padding*2))
+            local.alpha_composite(shadow.resize(local.size, Image.Resampling.BICUBIC))
+            local.alpha_composite(stretched, (padding, padding))
+            if len(self._lens_photos) >= 64:
+                self._lens_photos.clear()
+            self._lens_photos[image_key] = ImageTk.PhotoImage(local, master=self)
         center_y = self.position*step+step/2
         self.lens_bounds = ((width-sw)/2, center_y-sh/2, sw, sh)
-        self.photos = [ImageTk.PhotoImage(local, master=self)]
-        canvas.create_image(width/2, center_y, image=self.photos[0])
+        self._current_lens = self._lens_photos[image_key]
+        canvas.itemconfigure('rail_lens', image=self._current_lens)
+        canvas.coords('rail_lens', width/2, center_y)
+        active_index = max(0, min(len(self.keys)-1, math.floor(self.position+.5)))
+        caption_key = (scale, dark, active_index, self.hovered,
+                       tuple(self.items[k].options.get('text', self.app.tr(k)) for k in self.keys))
+        if caption_key == self._caption_key:
+            return
+        self._caption_key = caption_key
+        self.photos = []
         for i, key in enumerate(self.keys):
             active = i == max(0, min(len(self.keys)-1, math.floor(self.position+.5)))
             color = BLUE if active else self._apply_appearance_mode(INK)
@@ -389,10 +408,12 @@ class GlassRail(ctk.CTkFrame):
             glyph = icon(self.glyphs[key], 21, accent=active)
             photo = glyph.create_scaled_photo_image(scale, self._get_appearance_mode())
             self.photos.append(photo)
-            canvas.create_image(24*scale, i*step+step/2, image=photo)
+            canvas.itemconfigure(f'rail_icon_{i}', image=photo)
+            canvas.coords(f'rail_icon_{i}', 24*scale, i*step+step/2)
             item = self.items[key]
-            canvas.create_text(48*scale, i*step+step/2, text=item.options.get('text', self.app.tr(key)),
+            canvas.itemconfigure(f'rail_text_{i}', text=item.options.get('text', self.app.tr(key)),
                 anchor='w', fill=color, font=self._apply_font_scaling(self.fonts[active]))
+            canvas.coords(f'rail_text_{i}', 48*scale, i*step+step/2)
 
     def destroy(self):
         self.release_pointer()

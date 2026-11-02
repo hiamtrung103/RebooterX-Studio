@@ -33,7 +33,9 @@ def invalidate(widget):
     redraw = ctypes.windll.user32.RedrawWindow
     redraw.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.HANDLE, wintypes.UINT]
     redraw.restype = wintypes.BOOL
-    redraw(widget.winfo_id(), None, None, 0x0001 | 0x0004 | 0x0080 | 0x0100)
+    # Queue WM_PAINT; synchronous RDW_UPDATENOW + RDW_ERASE on every wheel
+    # tick stalls Tk and repaints all child windows, especially scrolling up.
+    redraw(widget.winfo_id(), None, None, 0x0001 | 0x0080)
 
 
 class DeferredScrollbar(ctk.CTkScrollbar):
@@ -60,6 +62,33 @@ class DeferredScrollbar(ctk.CTkScrollbar):
         if self._draw_job is not None:
             self.after_cancel(self._draw_job)
             self._draw_job = None
+        super().destroy()
+
+
+class DeferredOptionMenu(ctk.CTkOptionMenu):
+    """Avoid nested update_idletasks inside CTk's menu drawing on long forms."""
+    def __init__(self, *args, **kwargs):
+        self._draw_job = None
+        self._draw_colors = False
+        self._destroying = False
+        super().__init__(*args, **kwargs)
+
+    def _draw(self, no_color_updates=False):
+        if self._destroying:
+            return
+        self._draw_colors |= not no_color_updates
+        if self._draw_job is None:
+            self._draw_job = self.after(1, self.flush_draw)
+
+    def flush_draw(self):
+        self._draw_job = None
+        colors, self._draw_colors = self._draw_colors, False
+        super()._draw(no_color_updates=not colors)
+
+    def destroy(self):
+        self._destroying = True
+        if self._draw_job is not None:
+            self.after_cancel(self._draw_job)
         super().destroy()
 
 
@@ -122,8 +151,12 @@ class SmoothScrollFrame(ctk.CTkScrollableFrame):
         self._last_view = view
         if self._scroll_target is None and view != self._last_thumb_view and self._thumb_job is None:
             self._thumb_job = self.after(1, self.refresh_thumb)
-        if changed and self._paint_job is None:
-            self._paint_job = self._timer.schedule(self, 1, self.repaint_viewport)
+        if changed:
+            if self._paint_job is not None:
+                self.after_cancel(self._paint_job)
+            # Tk paints exposed rows normally during motion. Repair native
+            # child-window artifacts once the gesture settles, not every frame.
+            self._paint_job = self.after(80, self.repaint_viewport)
 
     def refresh_thumb(self):
         self._thumb_job = None
@@ -164,7 +197,7 @@ class SmoothScrollFrame(ctk.CTkScrollableFrame):
         self.schedule_scroll()
 
     def schedule_scroll(self):
-        if self._scroll_job is None and self._paint_job is None:
+        if self._scroll_job is None:
             elapsed = (time.perf_counter() - self._last_scroll_at) * 1000
             self._scroll_job = self._timer.schedule(self, max(1, math.ceil(17 - elapsed)), self.flush_scroll)
 
@@ -173,8 +206,6 @@ class SmoothScrollFrame(ctk.CTkScrollableFrame):
         if not self.winfo_ismapped() or not self._can_scroll:
             self._scroll_pending, self._scroll_target = 0, None
             self._timer.stop()
-            return
-        if self._paint_job is not None:
             return
         target, self._scroll_target = self._scroll_target, None
         amount, self._scroll_pending = self._scroll_pending, 0
@@ -189,18 +220,14 @@ class SmoothScrollFrame(ctk.CTkScrollableFrame):
             self._timer.stop()
 
     def repaint_viewport(self):
-        self._parent_canvas.update_idletasks()
-        if self._paint_job is not None:
-            self.after_cancel(self._paint_job)
         self._paint_job = None
         if not self.winfo_exists() or not self.winfo_ismapped():
             self._timer.stop()
             return
         invalidate(self._parent_canvas)
-        self._paint_job = self.after_idle(self.finish_repaint)
+        self.finish_repaint()
 
     def finish_repaint(self):
-        self._parent_canvas.update_idletasks()
         self._paint_job = None
         if self._scroll_target is not None or self._scroll_pending:
             self.schedule_scroll()

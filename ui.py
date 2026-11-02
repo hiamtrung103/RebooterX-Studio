@@ -64,7 +64,7 @@ EXTRA = {
     'personalization': ('Personalization', 'Cá nhân hóa'),
     'project_section': ('Project', 'Dự án'),
     'official_project': ('Official OptimizerNXT', 'OptimizerNXT chính thức'),
-    'version': ('RebooterX Studio · 2.1.0', 'RebooterX Studio · 2.1.0'),
+    'version': ('RebooterX Studio · 2.3.0', 'RebooterX Studio · 2.3.0'),
     'downloaded': ('Downloaded {name}', 'Đã tải {name}'),
     'downloading': ('Downloading packages…', 'Đang tải các gói…'),
     'running': ('CLI running in its own console', 'CLI đang chạy ở cửa sổ riêng'),
@@ -97,9 +97,14 @@ CATEGORIES = ('all_options', 'performance', 'privacy', 'system', 'protection', '
 NAV_ICONS = {'all_options': 'layers', 'performance': 'gauge', 'privacy': 'lock-keyhole',
              'system': 'settings-2', 'protection': 'shield-check', 'selection': 'check-check',
              'activity': 'history', 'settings': 'sliders-horizontal',
-             'windows_nav': 'layers', 'tools': 'gauge'}
+             'windows_nav': 'layers', 'tools': 'gauge', 'nvidia': 'sliders-horizontal'}
 EXTRA.update(COPY)
 EXTRA.update({
+    'nvidia': ('NVIDIA', 'NVIDIA'),
+    'nvidia_meta': ('Game profiles · performance & latency', 'Cấu hình game · hiệu năng & độ trễ'),
+    'installed_card': ('✓ Installed', '✓ Đã cài đặt'),
+    'installed_older': ('✓ Older version', '✓ Đã cài bản cũ'),
+    'nvidia_edit': ('Configure game profile', 'Thiết lập profile game'),
     'applied_filter': ('Previously applied', 'Gói đã chạy'),
     'state_applied': ('Applied', 'Đã chạy'),
     'state_never': ('Not run', 'Chưa chạy'),
@@ -185,23 +190,26 @@ class ReviewDialog(ctk.CTkToplevel):
 
 class PackageRow(ctk.CTkFrame):
     def __init__(self, parent, app, package):
-        super().__init__(parent, height=116, corner_radius=8, border_width=1,
-                         fg_color=SURFACE, border_color=EDGE)
+        super().__init__(parent, height=116, corner_radius=0, fg_color='transparent')
         self.app, self.package = app, package
         self.name = package['name']
-        self.grid_columnconfigure(2, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
         self.grid_propagate(False)
+        self.card = ctk.CTkFrame(self, corner_radius=10, border_width=1, fg_color=SURFACE, border_color=EDGE)
+        self.card.grid(row=0, column=0, sticky='nsew', padx=(0, 12), pady=2)
+        self.card.grid_columnconfigure(2, weight=1)
         self.value = tk.BooleanVar(value=self.name in app.checked)
-        self.check = ctk.CTkCheckBox(self, text='', width=22, checkbox_width=19, checkbox_height=19,
+        self.check = ctk.CTkCheckBox(self.card, text='', width=22, checkbox_width=19, checkbox_height=19,
                                    corner_radius=5, border_width=2, border_color=('#BFC6D0', '#646B79'),
                                    fg_color=BLUE, hover_color='#006FDB', variable=self.value,
                                    command=lambda: app.toggle(self.name))
         self.check.grid(row=0, column=0, rowspan=2, padx=(14, 13), pady=12)
         category = category_for(self.name)
-        self.symbol = ctk.CTkLabel(self, image=icon(NAV_ICONS[category], 21), text='',
+        self.symbol = ctk.CTkLabel(self.card, image=icon(NAV_ICONS[category], 21), text='',
                                    width=30, fg_color='transparent')
         self.symbol.grid(row=0, column=1, rowspan=2, padx=(0, 10))
-        self.copy = ctk.CTkFrame(self, fg_color='transparent')
+        self.copy = ctk.CTkFrame(self.card, fg_color='transparent')
         self.copy.grid(row=0, column=2, rowspan=2, sticky='nsew', pady=12)
         self.title_label = ctk.CTkLabel(self.copy, text=app.title_for(package), anchor='w',
                                       justify='left', font=font(app, 15, True), text_color=INK,
@@ -213,17 +221,20 @@ class PackageRow(ctk.CTkFrame):
         self.description.pack(fill='x', pady=(3, 0))
         tk.Misc.bind(self.copy, '<Configure>', self.reflow, add='+')
         meta = app.meta(package)
-        self.compatibility = ctk.CTkLabel(self, text='Win ' + meta[4] if meta[4] != 'All' else 'Windows',
+        self.compatibility = ctk.CTkLabel(self.card, text='Win ' + meta[4] if meta[4] != 'All' else 'Windows',
                                           font=font(app, 11), text_color=MUTED, width=98)
         self.compatibility.grid(row=0, column=3, sticky='ne', padx=(6, 12), pady=(14, 0))
         ToolTip(self.compatibility, lambda: app.tr('history_note'))
         risk = meta[5]
         if risk:
-            self.risk = ctk.CTkLabel(self, image=icon('shield-alert' if risk == 'security' else 'circle-alert', 16),
+            self.risk = ctk.CTkLabel(self.card, image=icon('shield-alert' if risk == 'security' else 'circle-alert', 16),
                                     text='', width=22)
             self.risk.grid(row=1, column=3, sticky='e', padx=15, pady=(0, 14))
             ToolTip(self.risk, lambda: app.tr(risk))
-        self.details = [self, self.symbol, self.copy, self.title_label, self.description, self.compatibility]
+        self.installed_badge = ctk.CTkLabel(self, text='', height=25, width=116, corner_radius=7,
+            fg_color=('#16835D', '#277B60'), text_color='white', font=font(app, 11, True))
+        ToolTip(self.installed_badge, lambda: app.tr('history_note'))
+        self.details = [self, self.card, self.symbol, self.copy, self.title_label, self.description, self.compatibility, self.installed_badge]
         for widget in self.details:
             widget.bind('<Button-1>', lambda _event: app.focus_package(self.name), add='+')
         self.sync()
@@ -239,8 +250,18 @@ class PackageRow(ctk.CTkFrame):
     def sync(self):
         checked = self.name in self.app.checked
         self.value.set(checked)
-        self.configure(border_color=BLUE if self.app.current == self.name else EDGE,
-                       fg_color=SELECTED if checked else SURFACE)
+        applied = self.app.history.item(self.name).get('applied')
+        installed = bool(applied)
+        self.card.configure(border_color=GREEN if installed else BLUE if self.app.current == self.name else EDGE,
+                            border_width=2 if installed else 1, fg_color=SELECTED if checked else SURFACE)
+        if installed:
+            key = 'installed_card' if applied.get('sha') == self.package['sha'] else 'installed_older'
+            self.installed_badge.configure(text=self.app.tr(key))
+            self.installed_badge.place(relx=1., x=-1, y=10, anchor='ne')
+            self.installed_badge.lift()
+        else:
+            self.installed_badge.place_forget()
+        self.compatibility.grid_configure(pady=(42 if installed else 14, 0))
         self.check.configure(state='disabled' if self.app.busy else 'normal')
         status = self.app.history.status(self.package)
         meta = self.app.meta(self.package)
@@ -370,7 +391,7 @@ class StudioApp(ctk.CTk):
         ctk.CTkLabel(names, text='STUDIO', font=font(self, 10, True), text_color=MUTED,
                      anchor='w', height=14).pack(fill='x')
         self.label(self.sidebar, 'preferences', text_color=MUTED, font=font(self, 11, True)).grid(row=1, column=0, sticky='w', padx=25, pady=(0, 10))
-        self.nav_rail = GlassRail(self.sidebar, self, ('windows_nav', 'tools', 'activity', 'settings'), NAV_ICONS)
+        self.nav_rail = GlassRail(self.sidebar, self, ('windows_nav', 'tools', 'nvidia', 'activity', 'settings'), NAV_ICONS)
         self.nav_rail.grid(row=2, column=0, sticky='ew', padx=12)
         self.nav_rail.grid_propagate(False)
         self.nav = self.nav_rail.items
@@ -413,6 +434,8 @@ class StudioApp(ctk.CTk):
         self.build_activity()
         self.build_settings()
         self.build_tools()
+        from nvidia_ui import NvidiaPage
+        self.nvidia_page = NvidiaPage(self)
         self.build_footer()
         self.library_page.grid(row=0, column=0, sticky='nsew')
 
@@ -597,18 +620,10 @@ class StudioApp(ctk.CTk):
         self.memory_full.pack(side='left', padx=(0, 10))
         self.make_button(cleanup, 'official_source', lambda: webbrowser.open(memory.PROJECT), 'arrow-up-right').pack(side='left')
         line(self.tools_page).grid(row=7, column=0, sticky='ew', pady=(0, 24))
-        self.label(self.tools_page, 'nvidia_title', font=font(self, 21, True), anchor='w').grid(row=8, column=0, sticky='ew', pady=(0, 12))
-        nvidia_note = self.label(self.tools_page, 'nvidia_note', font=font(self, 14), text_color=MUTED, justify='left', anchor='w', wraplength=700)
-        nvidia_note.grid(row=9, column=0, sticky='ew', pady=(0, 18))
-        graphics = ctk.CTkFrame(self.tools_page, fg_color='transparent')
-        graphics.grid(row=10, column=0, sticky='ew', pady=(0, 24))
-        self.make_button(graphics, 'nvidia_app', lambda: self.open_nvidia('app'), 'arrow-up-right').pack(side='left', padx=(0, 10))
-        self.make_button(graphics, 'nvidia_panel', lambda: self.open_nvidia('panel'), 'arrow-up-right').pack(side='left')
-        line(self.tools_page).grid(row=11, column=0, sticky='ew', pady=(0, 24))
-        self.label(self.tools_page, 'help', font=font(self, 21, True), anchor='w').grid(row=12, column=0, sticky='ew', pady=(0, 12))
+        self.label(self.tools_page, 'help', font=font(self, 21, True), anchor='w').grid(row=8, column=0, sticky='ew', pady=(0, 12))
         instructions = self.label(self.tools_page, 'help_text', font=font(self, 14), text_color=MUTED, justify='left', anchor='w', wraplength=700)
-        instructions.grid(row=13, column=0, sticky='ew', pady=(0, 24))
-        for label in (note, nvidia_note, instructions):
+        instructions.grid(row=9, column=0, sticky='ew', pady=(0, 24))
+        for label in (note, instructions):
             tk.Misc.bind(label, '<Configure>', lambda event, label=label: wrap(label, event.width, 16), add='+')
 
     def update_ram(self):
@@ -642,6 +657,10 @@ class StudioApp(ctk.CTk):
             if clean:
                 self.events.put(('memory_done', code))
         self.start_worker(task)
+
+    def edit_nvidia(self):
+        self.navigate('nvidia')
+        return self.nvidia_page
 
     def open_nvidia(self, tool):
         self.start_worker(lambda: self.find_and_open_nvidia(tool))
@@ -746,6 +765,7 @@ class StudioApp(ctk.CTk):
         self.category_filter.configure(values=[self.tr(key) for key in CATEGORIES])
         self.category_filter.set(self.tr(self.category))
         self.update_memory_status()
+        self.nvidia_page.translate()
         appearance_values = [self.tr('light'), self.tr('dark')]
         self.appearance_control.configure(values=appearance_values)
         self.appearance_control.set(appearance_values[self.appearance == 'Dark'])
@@ -762,7 +782,7 @@ class StudioApp(ctk.CTk):
             self.subtitle.configure(text=self.tr('catalog_meta', total=len(self.packages)))
         else:
             self.heading.configure(text=self.tr(self.page))
-            self.subtitle.configure(text=self.tr('tools_meta') if self.page == 'tools' else self.tr('version') if self.page == 'settings' else self.tr('log_count', count=len(self.logs)))
+            self.subtitle.configure(text=self.tr('nvidia_meta') if self.page == 'nvidia' else self.tr('tools_meta') if self.page == 'tools' else self.tr('version') if self.page == 'settings' else self.tr('log_count', count=len(self.logs)))
         for key, button in self.nav.items():
             active = key == ('windows_nav' if self.page == 'library' else self.page)
             count = len(self.checked) if key == 'selection' else None
@@ -774,7 +794,7 @@ class StudioApp(ctk.CTk):
     def navigate(self, key):
         if key == 'windows_nav':
             key = self.category
-        for page in (self.library_page, self.activity_page, self.settings_page, self.tools_page):
+        for page in (self.library_page, self.activity_page, self.settings_page, self.tools_page, self.nvidia_page):
             page.grid_remove()
         if key in CATEGORIES:
             self.category = key
@@ -784,7 +804,13 @@ class StudioApp(ctk.CTk):
             self.render(reset_scroll=True)
         else:
             self.page = key
-            {'activity': self.activity_page, 'settings': self.settings_page, 'tools': self.tools_page}[key].grid(row=0, column=0, sticky='nsew')
+            if key == 'nvidia':
+                self.nvidia_page.ensure_built()
+            {'activity': self.activity_page, 'settings': self.settings_page, 'tools': self.tools_page, 'nvidia': self.nvidia_page}[key].grid(row=0, column=0, sticky='nsew')
+        if self.page == 'nvidia':
+            self.footer.grid_remove()
+        else:
+            self.footer.grid()
         self.update_heading()
 
     def filter_category(self, value):
@@ -1209,6 +1235,9 @@ class StudioApp(ctk.CTk):
             self.open_folder(self.last_folder)
 
     def close(self):
+        if self.nvidia_page.busy:
+            self.navigate('nvidia')
+            return
         if self.busy and not messagebox.askyesno(self.tr('working'), self.tr('busy_close'), parent=self):
             return
         self.save()

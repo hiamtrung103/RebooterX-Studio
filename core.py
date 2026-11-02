@@ -17,7 +17,9 @@ import urllib.parse
 import urllib.request
 
 BASE = Path(__file__).resolve().parent
-DATA = Path(os.environ.get("REBOOTERX_DATA_DIR", os.environ.get("OPTIMIZERNXT_DATA_DIR", str(BASE / "data"))))
+DEFAULT_DATA = (Path(os.environ.get('LOCALAPPDATA', str(Path(sys.executable).parent))) / 'RebooterX-Studio'
+                if getattr(sys, 'frozen', False) else BASE / 'data')
+DATA = Path(os.environ.get("REBOOTERX_DATA_DIR", os.environ.get("OPTIMIZERNXT_DATA_DIR", str(DEFAULT_DATA))))
 STUDIO_URL = "https://github.com/hiamtrung103/RebooterX-Studio"
 REPO = "hellzerg/optimizerNXT"
 PROJECT_URL = f"https://github.com/{REPO}"
@@ -180,7 +182,8 @@ def run_host(folder: Path, args, started=lambda: None, auto_close=True):
     python = Path(sys.executable)
     if python.name.lower() == 'pythonw.exe':
         python = python.with_name('python.exe')
-    command = [str(BASE / 'runner.py'), '--folder', str(folder.resolve(strict=True)), '--sid', user_sid(), *args]
+    entry = ['--runner'] if getattr(sys, 'frozen', False) else [str(BASE / 'runner.py')]
+    command = [*entry, '--folder', str(folder.resolve(strict=True)), '--sid', user_sid(), *args]
     if auto_close:
         command.append('--auto-close')
     return run_program(python, command, folder, started, console=True)
