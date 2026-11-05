@@ -64,7 +64,7 @@ EXTRA = {
     'personalization': ('Personalization', 'Cá nhân hóa'),
     'project_section': ('Project', 'Dự án'),
     'official_project': ('Official OptimizerNXT', 'OptimizerNXT chính thức'),
-    'version': ('RebooterX Studio · 2.3.0', 'RebooterX Studio · 2.3.0'),
+    'version': ('RebooterX Studio · 2.3.1', 'RebooterX Studio · 2.3.1'),
     'downloaded': ('Downloaded {name}', 'Đã tải {name}'),
     'downloading': ('Downloading packages…', 'Đang tải các gói…'),
     'running': ('CLI running in its own console', 'CLI đang chạy ở cửa sổ riêng'),
@@ -627,6 +627,9 @@ class StudioApp(ctk.CTk):
             tk.Misc.bind(label, '<Configure>', lambda event, label=label: wrap(label, event.width, 16), add='+')
 
     def update_ram(self):
+        if self.page != 'tools' or self.state() == 'iconic':
+            self.ram_id = self.after(1500, self.update_ram)
+            return
         try:
             status = memory.ram_status()
             if status:

@@ -3,7 +3,8 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 datas = [('assets', 'assets'), ('LICENSE', '.'), ('README.md', '.')]
 datas += collect_data_files('customtkinter')
-for package in ('customtkinter', 'Pillow', 'PyYAML', 'pywin32'):
+datas += collect_data_files('certifi')
+for package in ('customtkinter', 'Pillow', 'PyYAML', 'pywin32', 'certifi', 'truststore'):
     datas += copy_metadata(package)
 a = Analysis(['app.py'], pathex=[], binaries=[], datas=datas,
              hiddenimports=['runner', 'bootstrap', 'nvidia_ui', 'win32security', 'win32event'],

@@ -83,3 +83,33 @@ def self_test(report_path):
         app.destroy()
     core.atomic_write(Path(report_path), json.dumps(report, indent=2).encode('utf-8'))
     return 0
+
+
+def network_test(report_path):
+    """Verify real HTTPS/redirects/hashes in the frozen build; never run downloads."""
+    import json
+    import tempfile
+    import certifi
+    import core
+    from network import tls_context
+    context = tls_context()
+    results = []
+    with tempfile.TemporaryDirectory(prefix='rebooterx-network-') as directory:
+        repo = core.Repository(Path(directory))
+        checks = [
+            ('GitHub API', lambda: len(repo.request(core.API))),
+            ('GitHub raw content', lambda: len(repo.request('https://raw.githubusercontent.com/hellzerg/optimizerNXT/main/README.md'))),
+            ('Official CLI download + SHA-256 (not executed)', lambda: repo.download_cli().stat().st_size),
+        ]
+        for name, operation in checks:
+            try:
+                results.append({'check': name, 'ok': True, 'bytes': operation()})
+            except Exception as error:
+                results.append({'check': name, 'ok': False, 'error': str(error)})
+    success = all(result['ok'] for result in results)
+    report = {'ok': success, 'admin': is_admin(), 'frozen': bool(getattr(sys, 'frozen', False)),
+              'ca_bundle_present': Path(certifi.where()).is_file(),
+              'verify_mode': int(context.verify_mode), 'check_hostname': context.check_hostname,
+              'results': results}
+    core.atomic_write(Path(report_path), json.dumps(report, ensure_ascii=False, indent=2).encode('utf-8'))
+    return 0 if success else 1

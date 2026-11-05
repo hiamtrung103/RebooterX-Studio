@@ -15,6 +15,9 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == '--self-test':
         from bootstrap import self_test
         return self_test(sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] == '--network-test':
+        from bootstrap import network_test
+        return network_test(sys.argv[2])
     try:
         from ui import StudioApp
     except ImportError as error:

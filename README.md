@@ -89,6 +89,26 @@ Footer hiển thị **© Hiamtrung102 2026**, nút GitHub mở repo này và nú
 
 ## Memory And Graphics
 
+### HTTPS on shared / internet-cafe PCs
+
+Version 2.3.1 uses Windows native certificate-chain verification through
+`truststore`, with a bundled Mozilla public CA bundle from `certifi`. This also
+supports roots trusted by Windows-managed proxies and missing intermediate-chain
+retrieval. Server certificates and hostnames are always verified; TLS 1.2 is the
+minimum. No Windows certificate store is changed. One cached context is shared by
+download workers to avoid rebuilding the trust configuration for every file.
+
+Certificate verification errors stop immediately rather than repeating the same
+failure three times, and show actionable bilingual advice. If verification still
+fails, check Windows date/time, Windows certificate updates and the venue's HTTPS
+proxy with the venue administrator. This update cannot repair an untrusted proxy
+certificate or an incorrect machine clock remotely.
+
+For a read/download-only diagnostic, run the packaged executable with
+`--network-test C:\path\network-report.json`. It checks GitHub API, raw content
+and an official CLI download with SHA-256 verification; it never executes the CLI.
+RAM polling/painting pauses while the Tools page is hidden or the app is minimized.
+
 Mem Reduct is downloaded separately from [Henry++'s official releases](https://github.com/henrypp/memreduct/releases).
 The release's SHA-256 manifest must match both the archive and the executable for the
 native architecture. 7-Zip extracts only the named portable files. The executable is

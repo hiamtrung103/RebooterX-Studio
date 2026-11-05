@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from network import tls_context, certificate_error
 
 BASE = Path(__file__).resolve().parent
 DEFAULT_DATA = (Path(os.environ.get('LOCALAPPDATA', str(Path(sys.executable).parent))) / 'RebooterX-Studio'
@@ -47,13 +48,16 @@ class Repository:
         self.data = data
 
     def request(self, url: str, limit: int = 32 * 1024 * 1024) -> bytes:
+        if urllib.parse.urlsplit(url).scheme.lower() != 'https':
+            raise ValueError('Downloads require HTTPS.')
+        context = tls_context()
         for attempt in range(3):
             try:
                 request = urllib.request.Request(url, headers={
-                    "User-Agent": "RebooterX-Studio/2.0",
+                    "User-Agent": "RebooterX-Studio/2.3.1",
                     "Accept": "application/vnd.github+json" if url.startswith(API) else "*/*",
                 })
-                with urllib.request.urlopen(request, timeout=25) as response:
+                with urllib.request.urlopen(request, timeout=25, context=context) as response:
                     content = response.read(limit + 1)
                 if len(content) > limit:
                     raise ValueError("Download exceeds size limit.")
@@ -65,7 +69,10 @@ class Repository:
                     raise
                 if attempt == 2:
                     raise
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, TimeoutError) as error:
+                failure = certificate_error(error, url)
+                if failure:
+                    raise failure from error
                 if attempt == 2:
                     raise
             time.sleep(attempt + 1)
